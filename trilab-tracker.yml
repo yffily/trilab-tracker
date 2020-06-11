@@ -1,0 +1,17 @@
+name: trilab-tracker
+channels:
+  - defaults
+dependencies:
+  - python=3.7
+  - pip
+  - pandas
+  - numpy
+  - matplotlib
+  - jupyter
+  - scipy
+  - pyqtgraph
+  - pip:
+    - opencv-python
+    - sklearn
+    - argparse
+
