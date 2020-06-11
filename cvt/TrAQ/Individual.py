@@ -313,6 +313,7 @@ class Individual:
         else:
             framei = frame_range[0]
             framef = frame_range[1]
+        print(self.df.shape,frame_range,framei,framef)
         n_cut = 1.*sum(self.df[cut_name].values[framei:framef])
         n_tot = 1.*len(self.df[cut_name].values[framei:framef])
         return 1. - n_cut / n_tot

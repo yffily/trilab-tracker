@@ -3,11 +3,12 @@ import numpy as np
 import cv2
 import pickle
 import os
+from cvt.utils import *
 
 
 class Tank:
 
-    def __init__(self, fvideo, r_cm = 111./2, output_dir = None):
+    def __init__(self, r_cm = 111./2):
         self.points  = np.zeros((3,2))    
         self.n_point = 0
         self.row_c   = 0
@@ -16,21 +17,10 @@ class Tank:
         self.r_cm    = r_cm
         self.found   = False
         self.frame   = None
-
-        self.fvideo  = os.path.abspath(fvideo)
-        if output_dir==None:
-            self.fpath = os.path.split(fvideo)[0]
-        else:
-            self.fpath = os.path.abspath(output_dir)
-	     
-        self.fname = os.path.join(self.fpath,'tank.pik')
+        self.wname   = None
 
 
     def print_info(self):
-        print("")
-        print("        Filenames")
-        print("           Tank: %s" % self.fname)
-        print("          Video: %s" % self.fvideo)
         print("")
         print("        Tank information (pixels)")
         print("            row: %4.2e " % self.row_c )
@@ -39,29 +29,25 @@ class Tank:
         print("")
 
 
-    def save(self, fname = None):
-        if fname != None:
-            self.fname = os.path.abspath(fname)
-        f = open(self.fname, 'wb')
+    def save(self, fname):
+        f = open(fname, 'wb')
         pickle.dump(self.__dict__, f, protocol = 3)
-        sys.stdout.write("\n        Tank object saved as %s \n" % self.fname)
+        sys.stdout.write("\n        Tank object saved as %s \n" % fname)
         sys.stdout.flush()
         f.close()
 
 
-    def load(self, fname = None):
-        if fname != None:
-            self.fname = os.path.abspath(fname)
+    def load(self, fname):
         try:
-            f = open(self.fname, 'rb')
+            f = open(fname, 'rb')
             tmp_dict = pickle.load(f)
             f.close()
             self.__dict__.update(tmp_dict) 
-            sys.stdout.write("\n        Tank object loaded from %s \n" % self.fname)
+            sys.stdout.write("\n        Tank object loaded from %s \n" % fname)
             sys.stdout.flush()
             return True
         except:
-            sys.stdout.write("\n        Tank not found %s \n" % self.fname)
+            sys.stdout.write("\n        Tank not found %s \n" % fname)
             sys.stdout.flush()
             return False
 
@@ -97,12 +83,12 @@ class Tank:
                 print("    Note: Only green points are used for calculation.")
             x_tmp, y_tmp = self.points[self.n_point%3][0], self.points[self.n_point%3][1]
             cv2.circle(self.frame, (int(x_tmp), int(y_tmp)), 4, (0, 0, 255), -1)
-            cv2.imshow('image',self.frame)
+            cv2.imshow(self.wname,self.frame)
             cv2.waitKey(cv2.EVENT_LBUTTONUP)
         self.points[self.n_point % 3] = [x, y]
         self.n_point += 1
         cv2.circle(self.frame, (int(x), int(y)), 4, (0, 255, 0), -1)
-        cv2.imshow('image',self.frame)
+        cv2.imshow(self.wname,self.frame)
         cv2.waitKey(cv2.EVENT_LBUTTONUP)
         if self.n_point > 2:
             self.calculate_circle()
@@ -115,11 +101,11 @@ class Tank:
             if np.sqrt(pow(px-self.row_c,2)+pow(py-self.col_c,2)) > self.r:
                 self.found = False
                 cv2.circle(self.frame, (int(self.row_c), int(self.col_c)), int(self.r), (0, 0, 255), -1)
-                cv2.imshow('image',self.frame)
+                cv2.imshow(self.wname,self.frame)
                 cv2.waitKey(0)
             else:
                 cv2.circle(self.frame, (int(self.row_c), int(self.col_c)), int(self.r), (0, 255, 0), -1)
-                cv2.imshow('image',self.frame)
+                cv2.imshow(self.wname,self.frame)
                 cv2.waitKey(0)    
 
 
@@ -141,45 +127,50 @@ class Tank:
         self.found = True
 
 
-    def locate(self):
-        frame_start = 0
-        frame_end   = 0
-        if not self.load():
-            cap = cv2.VideoCapture(self.fvideo)
-            if cap.isOpened() == False:
-                sys.exit("  Video cannot be opened! Ensure proper video file specified.")         
-            if frame_end < 0:
-                frame_end = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1          
-            while True:
-                # open frame
-                i_frame = int(np.random.uniform(frame_start,frame_end))
-                cap.set(cv2.CAP_PROP_POS_FRAMES, i_frame-1)
-                ret, self.frame = cap.read()
-                if ret == True:
-                    # try locating the tank
-                    cv2.namedWindow('image')
-                    cv2.setMouseCallback('image', self.add_circle_point)
-                    cv2.imshow('image', self.frame)
-                    cv2.waitKey(0)
-                    # show results and allow user to choose if it looks right
-                    cv2.circle(self.frame, (int(self.row_c), int(self.col_c)), int(self.r), (0, 255, 0), 4)
-                    cv2.circle(self.frame, (int(self.row_c), int(self.col_c)), 5, (0, 255, 0), -1)
-                    cv2.setMouseCallback('image', self.select_circle)
-                    cv2.imshow('image', self.frame)
-                    cv2.waitKey(0)
-                    # if the user decides the tank location is good, then exit loop
-                    if self.found:
-                        break
-                    else:
-                        continue
-          
-            self.frame = None
-            cap.release()
-            cv2.destroyAllWindows()
-            cv2.waitKey(1)
-          
+    def locate(self,fvideo,i_frame=None):
+        
+        cap = cv2.VideoCapture(fvideo)
+        
+        if cap.isOpened() == False:
+            sys.exit("  Video cannot be opened! Ensure proper video file specified.")
+        
+        n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if i_frame == None:
+            i_frame = n_frames//2
+        elif i_frame < 0:
+            i_frame = n_frames - 1
+        
+        # open frame
+        cap.set(cv2.CAP_PROP_POS_FRAMES, i_frame-1)
+        ret, self.frame = cap.read()
+        if ret == True:
+            # try locating the tank
+            self.wname = create_named_window('Locate the tank (click on three distinct points on the boundary)')
+            cv2.setMouseCallback(self.wname, self.add_circle_point)
+            cv2.imshow(self.wname, self.frame)
+            cv2.waitKey(0)
+            # show results and allow user to choose if it looks right
+            cv2.circle(self.frame, (int(self.row_c), int(self.col_c)), int(self.r), (0, 255, 0), 4)
+            cv2.circle(self.frame, (int(self.row_c), int(self.col_c)), 5, (0, 255, 0), -1)
+            cv2.setMouseCallback(self.wname, self.select_circle)
+            cv2.imshow(self.wname, self.frame)
+            cv2.waitKey(0)
+            # if the user decides the tank location is good, then exit loop
+        
+        self.frame = None
+        cap.release()
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
+      
+        if self.found:
             sys.stdout.write("\n       Tank detection complete.\n")
-            sys.stdout.flush()
-            
-            self.save()
-     
+        else:
+            sys.stdout.write("\n       Tank detection failed.\n")
+        sys.stdout.flush()
+    
+    def load_or_locate_and_save(self,tank_file,video_file,i_frame=None):
+        if not self.load(tank_file):
+            self.locate(video_file,i_frame)
+            self.save(tank_file)
+    
+    

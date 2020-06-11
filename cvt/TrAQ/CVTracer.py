@@ -9,26 +9,8 @@ from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 from cvt.TrAQ.Trial import Trial
-from cvt.Analysis.Math import angle_diff
-
-
-return_key,esc_key,space_key = 13,27,32 # Key codes for return, esc, space (for cv2.waitKey).
-
-default_window_size = 800,800
-
-def create_named_window(name='preview window'):
-    cv2.namedWindow(name,cv2.WINDOW_NORMAL)
-    cv2.moveWindow(name,0,0)
-    cv2.resizeWindow(name,default_window_size[0],default_window_size[1])
-    return name
-
-# Wait for a set duration then return false if the window needs closing, 
-# true otherwise.
-def wait_on_named_window(name,delay=-1):
-    k = cv2.waitKey(delay)
-    if cv2.getWindowProperty(name,cv2.WND_PROP_VISIBLE)!=1 or k==esc_key:
-        return -2
-    return k
+#from cvt.Analysis.Math import angle_diff
+from cvt.utils import *
 
 
 class CVTracer:
@@ -42,10 +24,10 @@ class CVTracer:
                  MOG2 = False ):
 
         self.trial          = trial
-        self.fvideo_in      = trial.fvideo_raw
+        self.fvideo_in      = trial.video_file
         self.fvideo_ext     = "mp4"
-        self.fvideo_out     = os.path.join(trial.fpath, "traced.mp4")
-        trial.fvideo_out    = self.fvideo_out
+        self.fvideo_out     = os.path.join(trial.output_dir, "traced.mp4")
+        trial.traced_file   = self.fvideo_out
 
         # initialize video playback details
         self.view_scale     = view_scale
@@ -158,14 +140,14 @@ class CVTracer:
         sys.stdout.write("\t                              github.com/patchmemory/cv-tracer\n")
         sys.stdout.write(" \n\n")
         sys.stdout.write("\t       Tracing %i fish using video, \n" % self.n_ind)
-        sys.stdout.write("\t         %s \n" % (self.trial.fvideo_raw))
+        sys.stdout.write("\t         %s \n" % (self.trial.video_file))
         sys.stdout.write(" \n\n")
         sys.stdout.write("\t       Writing output to \n")
         sys.stdout.write("\n")
         sys.stdout.write("\t         video: \n" )
-        sys.stdout.write("\t           %s \n" % (self.trial.fvideo_out))
+        sys.stdout.write("\t           %s \n" % (self.trial.traced_file))
         sys.stdout.write("\t         data: \n" )
-        sys.stdout.write("\t           %s \n" % (self.trial.fname))
+        sys.stdout.write("\t           %s \n" % (self.trial.output_dir))
         sys.stdout.write(" \n\n")
         sys.stdout.flush()
 

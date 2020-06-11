@@ -11,63 +11,59 @@ from cvt.TrAQ.Tank import Tank
 
 
 class Trial:
-    
-    # fvideo_raw is the path to the raw video file, output_dir is the path to the output directory.
-    def __init__(self, fvideo_raw = None, output_dir = None, n = 0, t = None, date = None, 
-                 fps = 30, tank_radius = 111./2, t_start = 0, t_end = -1 ):
 
+    def __init__(self):
         self.result = {}
         self.issue  = {}
-        
         self.cut_stats = {}
-
-        self.fname_std = 'trial.pik'
-#        self.fvideo_raw_std = 'raw.mp4'
-        self.fvideo_out_std = 'traced.mp4'
-        
-        self.fvideo_raw = fvideo_raw
-        self.fpath = output_dir
-        
-        if self.fvideo_raw != None:
-            self.fvideo_raw = os.path.abspath(fvideo_raw)
-            if self.fpath == None:
-                self.fpath = os.path.split(self.fvideo_raw)[0]
-        
-        self.fname = os.path.join(self.fpath,self.fname_std)
-        
-        if not self.load():
-            sys.stdout.write("\n        Generating new Trial object.\n")
-            self.tank        = Tank(self.fvideo_raw, tank_radius, output_dir=self.fpath)
-            self.tank.locate()
-            self.tank.r_cm   = tank_radius
-            self.group       = Group(int(n), t) 
-            self.fps         = fps
-            self.frame_start = t_start * fps
-            self.frame_end   = t_end   * fps
-        print(self.group.n, "individuals in trial")
-
+                
     
+    def init(self, video_file, output_dir = None, n = 0, t = None, date = None, 
+             fps = 30, tank_radius = 111./2, t_start = 0, t_end = -1 ):
+        
+        self.video_file = video_file
+        self.output_dir = output_dir
+        
+        if output_dir == None:
+            print('Warning: output files will be written in the directory of the input video.')
+            self.output_dir = os.path.split(video_file)[0]
+        
+        self.trial_file = os.path.join(output_dir,'trial.pik')
+        self.traced_file = os.path.join(output_dir,'traced.mp4')
+        self.tank_file = os.path.join(output_dir,'tank.pik')
+        
+        sys.stdout.write("\n        Generating new Trial object.\n")
+        self.tank        = Tank(tank_radius)
+        self.tank.load_or_locate_and_save(self.tank_file,self.video_file)
+        self.group       = Group(int(n), t) 
+        self.fps         = fps
+        self.frame_start = t_start * fps
+        self.frame_end   = t_end   * fps
+        print(self.group.n, "individuals in trial")
+        
+
     def print_info(self):
         date_str = "%02i/%02i/%4i" % ( self._date[1], self._date[2], self._date[0] )
         print("\n  %s, %2i %s" % ( date_str, self.group.n, self.group.t ) )
-        print("       trial: %s" % ( self.fname ) )
+        print("       trial: %s" % ( self.trial_file ) )
         print("       input: %s" % ( self.fvideo_raw ) )
         if self.issue:
             print("       Known issues: " )
             for key in self.issue:
                 print("           %s: %s" % (key, self.issue[key]))
-
+    
+    
     def new_fname(self, _fn):
-        return os.path.join(self.fpath, _fn) 
+        return os.path.join(self.output_dir, _fn) 
 
 
     def save(self, fname = None):
+        if fname == None:
+            fname = self.trial_file
         try:
-            if fname != None:
-                self.fname = fname
-            f = open(self.fname, 'wb')
+            f = open(fname, 'wb')
             pickle.dump(self.__dict__, f, protocol = 3)
-            sys.stdout.write("\n        Trial object saved as %s \n" % self.fname)
+            sys.stdout.write("\n        Trial object saved as %s \n" % fname)
             sys.stdout.flush()
             f.close()
             return True
@@ -75,20 +71,27 @@ class Trial:
             return False
 
     def load(self, fname = None):
-        if fname != None:
-            self.fname = fname
-        try:
-            f = open(self.fname, 'rb')
-            tmp_dict = pickle.load(f)
-            f.close()
-            self.__dict__.update(tmp_dict) 
-            sys.stdout.write("\n        Trial loaded from %s \n" % self.fname)
-            sys.stdout.flush()
-            return True
-        except:
-            sys.stdout.write("\n        Unable to load Trial from %s \n" % self.fname)
-            sys.stdout.flush()
-            return False
+        if fname == None:
+            fname = self.trial_file
+#        try:
+        f = open(fname, 'rb')
+        tmp_dict = pickle.load(f)
+        f.close()
+        self.__dict__.update(tmp_dict)
+        
+        # This should help use trial files created on a different machine.
+        self.output_dir = os.path.split(fname)[0]
+        for v in 'trial_file','tank_file','traced_file':
+            p = os.path.basename(self.__dict__[v])
+            self.__dict__[v] = os.path.join(self.output_dir,p)
+        
+        sys.stdout.write("\n        Trial loaded from %s \n" % fname)
+        sys.stdout.flush()
+        return True
+#        except:
+#            sys.stdout.write("\n        Unable to load Trial from %s \n" % fname)
+#            sys.stdout.flush()
+#            return False
 
 
     def reorganize_files(self):
