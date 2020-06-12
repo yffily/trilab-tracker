@@ -4,8 +4,6 @@ import pandas as pd
 import scipy.stats as spstats
 import itertools
 import sys
-cvhome="/disk1/astyanax-mexicanus/cv-tracer"
-sys.path.insert(0, cvhome)
 import cvt.Analysis.Math as ana_math 
 
 

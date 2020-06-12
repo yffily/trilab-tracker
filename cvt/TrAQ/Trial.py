@@ -16,6 +16,7 @@ class Trial:
         self.result = {}
         self.issue  = {}
         self.cut_stats = {}
+        self.plot_options = dict(dpi=150)
                 
     
     def init(self, video_file, output_dir = None, n = 0, t = None, date = None, 
@@ -37,8 +38,8 @@ class Trial:
         self.tank.load_or_locate_and_save(self.tank_file,self.video_file)
         self.group       = Group(int(n), t) 
         self.fps         = fps
-        self.frame_start = t_start * fps
-        self.frame_end   = t_end   * fps
+        self.frame_start = int(t_start*fps)
+        self.frame_end   = int(t_end*fps) if t_start>0 else -1
         print(self.group.n, "individuals in trial")
         
 
@@ -53,10 +54,6 @@ class Trial:
                 print("           %s: %s" % (key, self.issue[key]))
     
     
-    def new_fname(self, _fn):
-        return os.path.join(self.output_dir, _fn) 
-
-
     def save(self, fname = None):
         if fname == None:
             fname = self.trial_file
@@ -69,6 +66,7 @@ class Trial:
             return True
         except:
             return False
+
 
     def load(self, fname = None):
         if fname == None:
@@ -131,8 +129,7 @@ class Trial:
         sys.stdout.write("\n       Converting pixels to (x,y) space in (cm,cm).\n")
         sys.stdout.flush()
         self.group.convert_pixels(self.tank.row_c, self.tank.col_c, self.tank.r, self.tank.r_cm)
-        sys.stdout.write("\n       %s converted according to tank size and location" % self.fname )
-        sys.stdout.write("\n       as specified in %s" % self.tank.fname )
+        sys.stdout.write("\n       using to tank size and location from %s" % self.tank_file )
         sys.stdout.flush()
 
 
@@ -191,13 +188,13 @@ class Trial:
             tag_val[key] = self.parse_tag_range(tag, tag_key[key])
         
         tag_val['frame_range'] = [0,0]
-        tag_val['frame_range'][0] = tag_val['time_range'][0]*self.fps*60
-        tag_val['frame_range'][1] = tag_val['time_range'][1]*self.fps*60
+        tag_val['frame_range'][0] = int(tag_val['time_range'][0]*self.fps*60)
+        tag_val['frame_range'][1] = int(tag_val['time_range'][1]*self.fps*60)
 
         return tag_val
     
     
-    def evaluate_cuts(self, frame_range = None, n_buffer_frames = 2, 
+    def evaluate_cuts(self, time_range = None, n_buffer_frames = 2, 
                       ocut = None, vcut = None, wcut = None ):
         
         if ocut != None:
@@ -209,8 +206,13 @@ class Trial:
             self.group.cut_omega(self.fps, wcut, n_buffer_frames)
         self.group.cut_combine()
         
-        if frame_range == None:
-            frame_range = [ int(self.frame_start), int(self.frame_end) ]            
+        if time_range == None:
+            frame_range = [0,self.frame_end-self.frame_start]
+        else:
+            i1 = int(time_range[0]*self.fps)-self.frame_start
+            i2 = int(time_range[1]*self.fps)-self.frame_start
+            frame_range = [i1,i2]
+            
         mean, err = self.group.cut_stats(frame_range[0], frame_range[1])
         self.cuts_stats = { 'mean': mean, 'err': err }
         tag = self.generate_tag(frame_range, n_buffer_frames, ocut, vcut, wcut)
@@ -281,7 +283,7 @@ class Trial:
         self.save()          
         sys.stdout.write("\n")
         sys.stdout.write("       ... kinematics calculated for Trial and saved in\n")
-        sys.stdout.write("             %s \n" % self.fname)
+        sys.stdout.write("             %s \n" % self.trial_file)
         sys.stdout.flush()
 
 
@@ -292,7 +294,7 @@ class Trial:
         self.save()          
         sys.stdout.write("\n")
         sys.stdout.write("       ... tank crossings calculated for Trial and saved in\n")
-        sys.stdout.write("             %s \n" % self.fname)
+        sys.stdout.write("             %s \n" % self.trial_file)
         sys.stdout.flush()
 
 
@@ -373,8 +375,15 @@ class Trial:
     #################################################
     # plot functions
     #################################################
-
-
+    
+    
+    def make_fig_file(self,content,tag,ext='png'):
+        fig_dir = os.path.join(self.output_dir,'figures')
+        if not os.path.exists(fig_dir):
+            os.mkdir(fig_dir)
+        return f'{fig_dir}/{content}_{tag}.{ext}'
+    
+    
     def plot_hist(self, val_name, tag = None, save = True):
         h = self.get_group_result(val_name, 'hist', tag)
         plt.fill_between(h[:,0], h[:,1] - h[:,2], h[:,1] + h[:,2], color = 'blue', label='cross-fish error')
@@ -386,8 +395,9 @@ class Trial:
         plt.legend()
         plt.tight_layout()
         if save:
-            fig_name = "%s/%s_hist_%s.png" % (self.fpath, val_name, tag)
-            plt.savefig(fig_name)
+#            fig_name = "%s/%s_hist_%s.png" % (self.fpath, val_name, tag)
+            fig_name = self.make_fig_file(f'{val_name}_hist',tag)
+            plt.savefig(fig_name,**self.plot_options)
         else:
             plt.show()
         plt.clf()
@@ -408,8 +418,9 @@ class Trial:
         plt.legend()
         plt.tight_layout()
         if save:
-            fig_name = "%s/%s_hist_each_%s.png" % (self.fpath, val_name, tag)
-            plt.savefig(fig_name)
+#            fig_name = "%s/%s_hist_each_%s.png" % (self.fpath, val_name, tag)
+            fig_name = self.make_fig_file(f'{val_name}_hist_each',tag)
+            plt.savefig(fig_name,**self.plot_options)
         else:
             plt.show()
         plt.clf()
@@ -427,8 +438,9 @@ class Trial:
         plt.colorbar()
         plt.tight_layout()
         if save:
-            fig_name = "%s/dw_thetaw_%s.png" % (self.fpath, tag)
-            plt.savefig(fig_name)
+#            fig_name = "%s/dw_thetaw_%s.png" % (self.fpath, tag)
+            fig_name = self.make_fig_file('dw_thetaw',tag)
+            plt.savefig(fig_name,**self.plot_options)
         else:
             plt.show()
         plt.clf()      
@@ -446,8 +458,9 @@ class Trial:
         plt.colorbar()
         plt.tight_layout()
         if save:
-            fig_name = "%s/diw_miw_%s.png" % (self.fpath, tag)
-            plt.savefig(fig_name)
+#            fig_name = "%s/diw_miw_%s.png" % (self.fpath, tag)
+            fig_name = self.make_fig_file('diw_miw',tag)
+            plt.savefig(fig_nam,**self.plot_optionse)
         else:
             plt.show()
         plt.clf()      
@@ -465,8 +478,8 @@ class Trial:
         plt.colorbar()
         plt.tight_layout()
         if save:
-            fig_name = "%s/dij_mij_%s.png" % (self.fpath, tag)
-            plt.savefig(fig_name)
+            fig_name = f'{self.output_dir}/figures/dij_mij_{tag}.png'
+            plt.savefig(fig_name,**self.plot_options)
         else:
             plt.show()
         plt.clf()      
@@ -499,8 +512,9 @@ class Trial:
         plt.legend()
         plt.tight_layout()        
         if save:
-            fig_name = "%s/valid_%s.png" % (self.fpath, tag)
-            plt.savefig(fig_name)
+#            fig_name = f'{self.output_dir}/figures/valid_{tag}.png'
+            fig_name = self.make_fig_file('valid',tag)
+            plt.savefig(fig_name,**self.plot_options)
         else:
             plt.show()
         plt.clf()

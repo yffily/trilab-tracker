@@ -15,22 +15,18 @@ from cvt.utils import *
 
 class CVTracer:
     
-    
-    def __init__(self, trial, frame_start = 0, frame_end = -1, 
-                 n_pixel_blur = 3, block_size = 15, threshold_offset = 13, 
-                 min_area = 20, max_area = 400, len_trail = 3,
-                 RGB = False, online = False, view_scale = 1, GPU = False,
-                 adaptiveMethod = 'gaussian', threshType = 'inv', 
-                 MOG2 = False ):
+    def __init__(self, trial, n_pixel_blur = 3, block_size = 15, 
+                 threshold_offset = 13, min_area = 20, max_area = 400, 
+                 len_trail = 3, RGB = False, online = False, GPU = False, 
+                 adaptiveMethod = 'gaussian', threshType = 'inv', MOG2 = False ):
 
         self.trial          = trial
         self.fvideo_in      = trial.video_file
         self.fvideo_ext     = "mp4"
-        self.fvideo_out     = os.path.join(trial.output_dir, "traced.mp4")
+        self.fvideo_out     = os.path.join(trial.output_dir, 'traced.mp4')
         trial.traced_file   = self.fvideo_out
 
         # initialize video playback details
-        self.view_scale     = view_scale
         self.RGB            = RGB
         self.codec          = 'mp4v'
         if ( self.fvideo_ext == ".avi" ): self.codec = 'DIVX' 
@@ -44,8 +40,8 @@ class CVTracer:
         self.cap            = None
         self.frame          = None
         self.frame_num      = -1
-        self.frame_start    = frame_start
-        self.frame_end      = frame_end
+        self.frame_start    = trial.frame_start
+        self.frame_end      = trial.frame_end
         self.fps            = trial.fps
         self.init_video_capture()
         if MOG2:
@@ -91,35 +87,10 @@ class CVTracer:
         self.contour_major_axis = []
         self.contour_minor_axis = []
 
-
-        # choose whether to randomize or preset color list,
-        #     (not necessary if running grayscale)
-        self.preset_color_list()        
-        
-        
-    def preset_color_list(self):
-        self.colors             = [ (   0,   0, 255),
-                                    (   0, 255, 255),
-                                    ( 255,   0, 255),
-                                    ( 255, 255, 255),
-                                    ( 255, 255,   0),
-                                    ( 255,   0,   0),
-                                    (   0, 255,   0),
-                                    (   0,   0,   0) ]
-
-
-    def random_color_list(self):
-        self.colors = []
-        low = 0
-        high = 255
-        print("    Randomizing colors for VideoCV object...")
-        for i in range(self.n_ind):
-            color = []
-            for i in range(3):
-                color.append(np.uint8(np.random.random_integers(low,high)))
-            self.colors.append((color[0],color[1],color[2]))
-        print("    Color list set as follows, ")
-        print(self.colors)
+        self.colors = color_list     
+#        colors = plt.cm.hsv(np.linspace(0,1,self.n_ind+1))[:-1]
+#        colors = [tuple(int(255*x) for x in color) for color in colors]
+#        self.colors = colors
         
         
     def print_title(self):
@@ -164,19 +135,14 @@ class CVTracer:
             sys.exit('Video file cannot be read! Please check input_vidpath ' 
                      + 'to ensure it is correctly pointing to the video file. \n %s' % self.fvideo_in)
              
-            
         # Video writer class to output video with contour and centroid of tracked
         # object(s) make sure the frame size matches size of array 'final'
         fourcc = cv2.VideoWriter_fourcc(*self.codec)
-        output_framesize = ( int(self.cap.read()[1].shape[1]*self.view_scale),
-                             int(self.cap.read()[1].shape[0]*self.view_scale)  )
-        self.width = output_framesize[0]
-        self.height = output_framesize[1]
-
+        ret, self.frame = self.cap.read()
+        frameSize = self.frame.shape[1], self.frame.shape[0]
         self.out = cv2.VideoWriter( filename = self.fvideo_out, fourcc = fourcc, 
-                                    fps = self.fps, frameSize = output_framesize, 
+                                    fps = self.fps, frameSize = frameSize, 
                                     isColor = self.RGB )
-        
         self.frame_num = self.frame_start
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_num)
         if self.frame_end < 0:
@@ -210,15 +176,11 @@ class CVTracer:
         self.frame_num = i
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, i)
 
-
     def get_frame(self):
         if self.cap.isOpened():
             ret, self.frame = self.cap.read()
             if ret == True:
                 self.frame_num += 1
-                if self.online_viewer:
-                    cv2.resize(self.frame, ( self.width, self.height ), 
-                               interpolation = cv2.INTER_LINEAR)
                 if self.GPU:
                     self.frame = cv2.UMat(self.frame)
                 return True
@@ -233,27 +195,26 @@ class CVTracer:
     def write_frame(self):
         if self.GPU:
             self.frame = cv2.UMat.get(self.frame)
-        self.out.write(self.frame)
+        return self.out.write(self.frame)
 
         
     def post_frame(self,delay=None):
         if delay==None or delay<1:
             delay = int(1000/self.fps)
         if ( self.online_viewer ):
-#            name = create_named_window()
-            name = self.online_window
-            cv2.imshow(name,self.frame)
-            k = wait_on_named_window(name,delay)
+            wname = self.online_window
+            cv2.imshow(wname,self.frame)
+            k = wait_on_named_window(wname,delay)
             if k==-2:
                 return 0
             if k==space_key:
                 while True:
-                    k2 = wait_on_named_window(name,delay)
+                    k2 = wait_on_named_window(wname,delay)
                     if k2==-2:
                         return 0
                     if k2==space_key:
                         break
-            return 1
+        return 1
  
 
     def print_current_frame(self):
@@ -413,10 +374,12 @@ class CVTracer:
     
     # calculate predicted trajectory based on previous three points 
     def predict_next(self):
+        if len(self.coord_pre)==0:
+            return [[np.nan,np.nan,np.nan] for i in range(self.n_ind)]
         prediction = self.coord_pre.copy()
         for i in range(len(self.coord_pre)):
             if len(self.trail) > 2:
-                prediction[i][0] = ( self.trail[-1][i][0] 
+                prediction[i][0] = ( self.trail[-1][i][0]
                                         + ( 3*self.trail[-1][i][0] 
                                           - 2*self.trail[-2][i][0] 
                                           -   self.trail[-3][i][0] ) / 4. )
@@ -424,19 +387,19 @@ class CVTracer:
                                         + ( 3*self.trail[-1][i][1] 
                                           - 2*self.trail[-2][i][1] 
                                           -   self.trail[-3][i][1] ) / 4. )
-            else:
+            elif len(self.trail)==2:
                 prediction[i][0] = ( 2*self.trail[-1][i][0]   
                                      - self.trail[-2][i][0] )
                 prediction[i][1] = ( 2*self.trail[-1][i][1]                                    
                                      - self.trail[-2][i][1] )
+            elif len(self.trail)==1:
+                prediction[i][0] = self.trail[-1][i][0]
+                prediction[i][1] = self.trail[-1][i][1]
+            else:
+                prediction[i][0] = np.nan
+                prediction[i][1] = np.nan
         return prediction
     
-    # in the absence of contours, if there is a trail, make a guess based on
-    # last few frames in trail,
-    def guess(self):
-        self.coord_now = self.predict_next()
-
-
 
     #############################
     # Frame-to-frame functions
@@ -453,10 +416,10 @@ class CVTracer:
     # this is the main algorithm the tracer follows when trying 
     # to associate individuals identified in this frame with 
     # those identified in the previous frame/s
-    def connect_frames(self):
+    def connect_frames(self):        
         # for initial frames, make "educated guesses" to at 
         # least get the tracking started
-        if self.tracked_frames() < self.len_trail:
+        if len(self.contours)>0 and self.tracked_frames() < self.len_trail:
             self.kmeans_contours()
             if self.tracked_frames() > 1:
                 self.reorder_hungarian()
@@ -473,19 +436,19 @@ class CVTracer:
         # and connect to previous frame based on hugarian min-dist algorithm
         if len(self.contours) == self.n_ind:
             self.reorder_hungarian()            
-        # if tracer has not found correct number of contours, consider the
-        # situation for special handling of frame-to-frame connections
+        # if no contours found, make guess based on trail prediction
+        elif len(self.contours) == 0:
+            self.coord_now = self.predict_next()
+        # for all other cases, work with occlusions and 
+        # incorrectly identified contours
         else:
-            # if no contours found, make guess based on trail prediction
-            if len(self.contours) == 0: self.guess()
-            # for all other cases, work with occlusions and 
-            # incorrectly identified contours
-            else: self.handle_contour_issues()
+            self.handle_contour_issues()
                 
             
     def handle_contour_issues(self):
         # first arrange data in structure to fit with cdist()
         self.coord_pre = self.predict_next()
+        
         xy_pre = np.array(self.coord_pre)[:,[0,1]]
         xy_now = np.array(self.coord_now)[:,[0,1]]
 
@@ -668,13 +631,21 @@ class CVTracer:
         return 1
 
 
-    def draw(self):
-        self.draw_tank(self.trial.tank)
-        if ( len(self.contour_list) != self.n_ind ):
-            self.draw_contour_repeat()
-        self.draw_points()
-        self.draw_directors()
-        self.draw_tstamp()
+    def draw(self, tank=True, repeat_contours=True, all_contours=False, 
+             contour_color=(0,0,0), contour_thickness=1,
+             points=True, directors=True, timestamp=True):
+        if tank:
+            self.draw_tank(self.trial.tank)
+        if all_contours:
+            self.draw_contours(contour_color, contour_thickness)
+        elif len(self.contour_list) != self.n_ind:
+            self.draw_contour_repeat(contour_color, contour_thickness)
+        if points:
+            self.draw_points()
+        if directors:
+            self.draw_directors()
+        if timestamp:
+            self.draw_tstamp()
 
 
     def draw_tstamp(self):
@@ -701,23 +672,22 @@ class CVTracer:
                        0, thickness=7)    
 
 
-    def draw_contour_repeat(self):
+    def draw_contour_repeat(self,contour_color=(0,0,0), contour_thickness=1):
         if self.RGB:
-            color = (0,0,0)
+            color = contour_color
         else:
             color = 0
-        # draw contours in list 
-        for i in self.contour_list: 
-            cv2.drawContours(self.frame, self.contour_repeat, i, color, 2)
+        for i in self.contour_list:
+            cv2.drawContours(self.frame, self.contour_repeat, i, color, int(contour_thickness))
 
 
     # Draw every contour (useful for detection quality control/parameter adjustment).
-    def draw_contours(self):
+    def draw_contours(self,contour_color=(0,0,0), contour_thickness=1):
         if self.RGB:
-            color = (0,0,255)
+            color = contour_color
         else:
             color = 0
-        cv2.drawContours(self.frame,self.contours,-1,color,1)
+        cv2.drawContours(self.frame, self.contours, -1, color, int(contour_thickness))
 
 
     def draw_points(self):
