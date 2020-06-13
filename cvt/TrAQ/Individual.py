@@ -51,8 +51,8 @@ class Individual:
     def convert_pixels(self, row_c, col_c, L_pix, L_m):
         A_convert = L_m / L_pix
         self.pixel_reformat()
-        self.df['x'] =  A_convert*(self.df['row'] - row_c)
-        self.df['y'] =  A_convert*(self.df['col'] - col_c)
+        self.df['x'] =  A_convert*(self.df['col'] - col_c)
+        self.df['y'] =  A_convert*(self.df['row'] - row_c)
 
 
     def pixel_reformat(self):
@@ -311,7 +311,6 @@ class Individual:
         else:
             framei = frame_range[0]
             framef = frame_range[1]
-        print(self.df.shape,frame_range,framei,framef)
         n_cut = 1.*sum(self.df[cut_name].values[framei:framef])
         n_tot = 1.*len(self.df[cut_name].values[framei:framef])
         return 1. - n_cut / n_tot

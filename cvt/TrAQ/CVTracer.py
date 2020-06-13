@@ -18,7 +18,9 @@ class CVTracer:
     def __init__(self, trial, n_pixel_blur = 3, block_size = 15, 
                  threshold_offset = 13, min_area = 20, max_area = 400, 
                  len_trail = 3, RGB = False, online = False, GPU = False, 
-                 adaptiveMethod = 'gaussian', threshType = 'inv', MOG2 = False ):
+                 adaptiveMethod = 'gaussian', threshType = 'inv', 
+                 MOG2 = False, MOG_history = 1000, MOG_varThreshold = 25,
+                 MOG_initial_skip = 10, MOG_learning_rate = 0.01 ):
 
         self.trial          = trial
         self.fvideo_in      = trial.video_file
@@ -32,8 +34,6 @@ class CVTracer:
         if ( self.fvideo_ext == ".avi" ): self.codec = 'DIVX' 
         self.online_viewer  = online
         self.online_window  = 'CVTracer live tracking'
-        if (self.online_viewer):
-            create_named_window(self.online_window)
         self.GPU            = GPU
 
         # initialize openCV video capture
@@ -44,6 +44,11 @@ class CVTracer:
         self.frame_end      = trial.frame_end
         self.fps            = trial.fps
         self.init_video_capture()
+        
+        self.MOG_history    = MOG_history
+        self.MOG_varThreshold = MOG_varThreshold
+        self.MOG_initial_skip = MOG_initial_skip
+        self.MOG_learning_rate = MOG_learning_rate
         if MOG2:
             self.MOG2 = True
             print("Using MOG2 Background Subtraction")
@@ -186,11 +191,24 @@ class CVTracer:
                 return True
         return False
 
+
     def init_background_subtractor(self):
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                                    history=1000, 
-                                    varThreshold=25,
+                                    history=self.MOG_history, 
+                                    varThreshold=self.MOG_varThreshold,
                                     detectShadows=False)
+        for i in range(0,self.MOG_history,self.MOG_initial_skip):
+            self.set_frame(self.frame_start + self.MOG_history - i)
+            self.get_frame()
+            self.print_current_frame()
+            self.mask_tank()
+            self.bg_subtractor.apply(self.frame,learningRate=self.MOG_learning_rate)
+    
+    
+    def init_live_preview(self):
+        if (self.online_viewer):
+            create_named_window(self.online_window)
+    
 
     def write_frame(self):
         if self.GPU:
@@ -537,16 +555,17 @@ class CVTracer:
         else:
             tank_mask = np.zeros_like(self.frame)
         
-        cv2.circle(tank_mask, (row_c,col_c), R, (255, 255, 255), thickness=-1)
+        cv2.circle(tank_mask, (col_c,row_c), R, (255, 255, 255), thickness=-1)
         self.frame = cv2.bitwise_and(self.frame, tank_mask)
 
 
     def mask_background(self):
         self.fgmask = self.bg_subtractor.apply(self.frame)
-        fgmask_bin = self.fgmask > 1
-        frame_nobg = np.full_like(self.frame,255) 
-        frame_nobg[fgmask_bin] = self.frame[fgmask_bin]
-        self.frame = frame_nobg
+#        fgmask_bin = self.fgmask > 1
+#        frame_nobg = np.full_like(self.frame,255) 
+#        frame_nobg[fgmask_bin] = self.frame[fgmask_bin]
+#        self.frame = frame_nobg
+        self.frame[self.fgmask<=1] = 255
         return
 
 
@@ -665,10 +684,10 @@ class CVTracer:
     
     def draw_tank(self, tank):
         if self.RGB:
-            cv2.circle(self.frame, (int(tank.row_c), int(tank.col_c)), int(tank.r),
+            cv2.circle(self.frame, (int(tank.col_c), int(tank.row_c)), int(tank.r),
                        (0,0,0), thickness=7)
         else:
-            cv2.circle(self.frame, (int(tank.row_c), int(tank.col_c)), int(tank.r),
+            cv2.circle(self.frame, (int(tank.col_c), int(tank.row_c)), int(tank.r),
                        0, thickness=7)    
 
 
