@@ -411,7 +411,7 @@ class Trial:
             mean = self.get_individual_result(i, val_name, 'mean', tag)
             i += 1
             c = color_set[i%len(color_set)]
-            plt.axvline(x = mean, color = c, linewidth = 1)
+            plt.axvline(x = mean, color = c, linewidth = 1, ls = ':')
             plt.plot(h[:,0], h[:,1], color = c, linewidth = 1, label=i)
         plt.xlabel(val_name)
         plt.ylabel("normalized count")
