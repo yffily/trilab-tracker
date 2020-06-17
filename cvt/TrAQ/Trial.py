@@ -39,7 +39,7 @@ class Trial:
         self.group       = Group(int(n), t) 
         self.fps         = fps
         self.frame_start = int(t_start*fps)
-        self.frame_end   = int(t_end*fps) if t_start>0 else -1
+        self.frame_end   = int(t_end*fps) if t_end>0 else -1
         print(self.group.n, "individuals in trial")
         
 

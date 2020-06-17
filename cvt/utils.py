@@ -4,29 +4,39 @@ import sys
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import screeninfo
 
 
 #========================================================
 # openCV window interaction.
 
-return_key,esc_key,space_key = 13,27,32 # Key codes for return, esc, space (for cv2.waitKey).
+return_key,esc_key,space_key,backspace_key = 13,27,32,8 # Key codes for cv2.waitKey.
 
-default_window_size = 800,800
+#default_window_size = 800,800
+screen = screeninfo.get_monitors()[0]
+
 
 def create_named_window(name='preview window'):
 #    cv2.namedWindow(name,cv2.WINDOW_NORMAL)
     cv2.namedWindow(name,cv2.WINDOW_KEEPRATIO)
-    cv2.moveWindow(name,0,0)
-    cv2.resizeWindow(name,default_window_size[0],default_window_size[1])
+    cv2.moveWindow(name,screen.x,screen.y)
+#    cv2.resizeWindow(name,default_window_size[0],default_window_size[1])
+    cv2.resizeWindow(name,screen.width,screen.height)
     return name
 
-# Wait for a set duration then return false if the window needs closing, 
-# true otherwise.
+# Wait for a set duration or until a key is pressed.
+# Return the keycode or -2 if the window needs to be closed.
 def wait_on_named_window(name,delay=-1):
-    k = cv2.waitKey(delay)
-    if cv2.getWindowProperty(name,cv2.WND_PROP_VISIBLE)!=1 or k==esc_key:
-        return -2
-    return k
+    delay = int(delay)
+    if delay < 1:
+        delay = 1000000 # wait "forever" ~20 minutes
+    for t in range(delay):
+        k = cv2.waitKey(1)
+        if cv2.getWindowProperty(name,cv2.WND_PROP_VISIBLE)!=1 or k==esc_key:
+            return -2
+        if k!=-1:
+            return k
+    return -1
 
 #========================================================
 # Plotting.

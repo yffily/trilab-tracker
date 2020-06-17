@@ -10,8 +10,11 @@ dependencies:
   - jupyter
   - scipy
   - pyqtgraph
+#  - xlrd # read excel spreadsheets
+#  - openpyxl # write excel spreadsheets
   - pip:
     - opencv-python
     - sklearn
     - argparse
+    - screeninfo # get screen resolution
 

@@ -144,9 +144,9 @@ class CVTracer:
         # object(s) make sure the frame size matches size of array 'final'
         fourcc = cv2.VideoWriter_fourcc(*self.codec)
         ret, self.frame = self.cap.read()
-        frameSize = self.frame.shape[1], self.frame.shape[0]
+        self.frameSize = self.frame.shape[1], self.frame.shape[0]
         self.out = cv2.VideoWriter( filename = self.fvideo_out, fourcc = fourcc, 
-                                    fps = self.fps, frameSize = frameSize, 
+                                    fps = self.fps, frameSize = self.frameSize, 
                                     isColor = self.RGB )
         self.frame_num = self.frame_start
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_num)
