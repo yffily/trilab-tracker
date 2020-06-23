@@ -19,8 +19,8 @@ class Trial:
         self.plot_options = dict(dpi=150)
                 
     
-    def init(self, video_file, output_dir = None, n = 0, t = None, date = None, 
-             fps = 30, tank_radius = 111./2, t_start = 0, t_end = -1 ):
+    def init(self, video_file, output_dir = None, n = 0, 
+             fps = 30, tank_radius = 1., t_start = 0, t_end = -1 ):
         
         self.video_file = video_file
         self.output_dir = output_dir
@@ -36,7 +36,7 @@ class Trial:
         sys.stdout.write("\n        Generating new Trial object.\n")
         self.tank        = Tank(tank_radius)
         self.tank.load_or_locate_and_save(self.tank_file,self.video_file)
-        self.group       = Group(int(n), t) 
+        self.group       = Group(int(n)) 
         self.fps         = fps
         self.frame_start = int(t_start*fps)
         self.frame_end   = int(t_end*fps) if t_end>0 else -1
@@ -44,8 +44,6 @@ class Trial:
         
 
     def print_info(self):
-        date_str = "%02i/%02i/%4i" % ( self._date[1], self._date[2], self._date[0] )
-        print("\n  %s, %2i %s" % ( date_str, self.group.n, self.group.t ) )
         print("       trial: %s" % ( self.trial_file ) )
         print("       input: %s" % ( self.fvideo_raw ) )
         if self.issue:

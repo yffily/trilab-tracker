@@ -4,16 +4,17 @@ channels:
 dependencies:
   - python=3.7
   - pip
-  - pandas
-  - numpy
-  - matplotlib
   - jupyter
+  - numpy
   - scipy
+  - pandas
+  - matplotlib
   - pyqtgraph
-#  - xlrd # read excel spreadsheets
-#  - openpyxl # write excel spreadsheets
+  - xlrd # read excel spreadsheets
+  - openpyxl # write excel spreadsheets
   - pip:
     - opencv-python
+    - opencv-contrib-python # contains cv2.bgsegm with extra background subtraction methods
     - sklearn
     - argparse
     - screeninfo # get screen resolution

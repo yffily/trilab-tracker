@@ -724,7 +724,7 @@ class CVTracer:
     def draw_directors(self):
         self.coord_now = np.array(self.coord_now)
         self.coord_pre = np.array(self.coord_pre)
-        vsize = 7
+        vsize = 10
         for i in range(len(self.coord_now)):
             cx = self.coord_now[i][0]
             cy = self.coord_now[i][1]
@@ -733,11 +733,15 @@ class CVTracer:
             # coordinates for director line segement
             x0, y0 = int(cx - vsize*np.cos(theta)), int(cy - vsize*np.sin(theta))
             x1, y1 = int(cx + vsize*np.cos(theta)), int(cy + vsize*np.sin(theta))    
+            
+#            if self.RGB:
+#                cv2.line(self.frame, (x0, y0), (x1, y1), self.colors[i%len(self.colors)], 2)
+#                cv2.circle(self.frame, (x1, y1), 3, self.colors[i%len(self.colors)], -1)
+#            else:
+#                cv2.line(self.frame, (x0, y0), (x1, y1), 0, 2)
+#                cv2.circle(self.frame, (x1, y1), 3, 255, -1)
+            
+            c = self.colors[i%len(self.colors)] if self.RGB else 255
+            cv2.arrowedLine(self.frame, (x0, y0), (x1, y1), 
+                            color=c, thickness=2, tipLength=0.3)
 
-            if self.RGB:
-                cv2.line(self.frame, (x0, y0), (x1, y1), self.colors[i%len(self.colors)], 2)
-                cv2.circle(self.frame, (x1, y1), 3, self.colors[i%len(self.colors)], -1)
-            else:
-                
-                cv2.line(self.frame, (x0, y0), (x1, y1), 0, 2)
-                cv2.circle(self.frame, (x1, y1), 3, 255, -1)

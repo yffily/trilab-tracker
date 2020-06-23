@@ -6,11 +6,9 @@ from cvt.Analysis import Math as ana_math
 
 class Group: 
 
-    def __init__(self, n, t):
+    def __init__(self, n):
 
-        self.t = t
         self.n = n
-
         self.fish = list(np.empty(n))
         for i in range(n):
             self.fish[i] = Individual()
@@ -29,10 +27,6 @@ class Group:
     def sort_by_time(self):
         for i_fish in range(self.n_fish()):
             self.fish[i_fish].sort_by_time()
-
-    def print_info(self):
-        print("  Group of %i %s fish." % (self.n, self.t) )
-        print(self.fish)
 
     def print_frame(self,index):
         for i_fish in range(self.n_fish()):
