@@ -19,10 +19,15 @@ screen = screeninfo.get_monitors()[0]
 def create_named_window(name='preview window'):
 #    cv2.namedWindow(name,cv2.WINDOW_NORMAL)
     cv2.namedWindow(name,cv2.WINDOW_KEEPRATIO)
-    cv2.moveWindow(name,screen.x,screen.y)
 #    cv2.resizeWindow(name,default_window_size[0],default_window_size[1])
     cv2.resizeWindow(name,screen.width,screen.height)
+    cv2.moveWindow(name,screen.x,screen.y)
     return name
+
+#def default_resize_named_window(name):
+#    cv2.resizeWindow(name,screen.width,screen.height)
+#    cv2.moveWindow(name,screen.x,screen.y)
+#    return name
 
 # Wait for a set duration or until a key is pressed.
 # Return the keycode or -2 if the window needs to be closed.
@@ -51,19 +56,19 @@ def wait_on_named_window(name,delay=-1):
 
 #color_list = [ c[::-1] for c in color_list ] # from RGB from openCV's BGR
 
-color_list = [  (   0,   0, 255),
-                ( 255,   0,   0),
-                (   0, 255,   0),
-                (   0, 127, 255),
-                ( 255,   0, 255),
-                (   0,   0, 170),
-                ( 255, 255,   0),
-                (   0, 155,   0),
-                (  50, 200, 250),
-                ( 155,   0, 155),
-                ( 155,   0,   0),
-                ( 255, 255, 255),
-                (   0,   0,   0) ]
+color_list = [  (   0,   0, 255),  # red
+                ( 255,   0,   0),  # blue
+                (   0, 255,   0),  # green
+                (   0, 127, 255),  # orange
+                ( 255,   0, 255),  # purple
+                (   0,   0, 170),  # dark red
+                ( 255, 255,   0),  # cyan
+                (   0, 155,   0),  # dark green
+                (  50, 200, 250),  # yellow
+                ( 155,   0, 155),  # dark purple
+                ( 155,   0,   0),  # dark blue
+                ( 255, 255, 255),  # white
+                (   0,   0,   0) ] # black
 
 
 #========================================================

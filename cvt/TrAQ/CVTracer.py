@@ -1,11 +1,13 @@
 import sys
 import os
 import cv2
-import math
+#import math
 import numpy as np
+import numpy.linalg as la
+import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from sklearn.cluster import DBSCAN
+#from sklearn.cluster import KMeans
+#from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 from cvt.TrAQ.Trial import Trial
@@ -17,10 +19,11 @@ class CVTracer:
     
     def __init__(self, trial, n_pixel_blur = 3, block_size = 15, 
                  threshold_offset = 13, min_area = 20, max_area = 400, 
-                 len_trail = 3, RGB = False, online = False, GPU = False, 
-                 adaptiveMethod = 'gaussian', threshType = 'inv', 
+                 max_frame2frame_distance = None, significant_displacement = None,
+                 adaptiveMethod = 'gaussian', threshType = 'inv', RGB = False, 
                  MOG2 = False, MOG_history = 1000, MOG_varThreshold = 25,
-                 MOG_initial_skip = 10, MOG_learning_rate = 0.01 ):
+                 MOG_initial_skip = 10, MOG_learning_rate = 0.01,
+                 live_preview = False, GPU = False ):
 
         self.trial          = trial
         self.fvideo_in      = trial.video_file
@@ -32,7 +35,7 @@ class CVTracer:
         self.RGB            = RGB
         self.codec          = 'mp4v'
         if ( self.fvideo_ext == ".avi" ): self.codec = 'DIVX' 
-        self.online_viewer  = online
+        self.online_viewer  = live_preview
         self.online_window  = 'CVTracer live tracking'
         self.GPU            = GPU
 
@@ -59,7 +62,6 @@ class CVTracer:
         self.thresh         = []
         self.block_size     = block_size
         self.offset         = threshold_offset
-        print(threshold_offset)
         self.threshMax      = 100
         if adaptiveMethod == 'gaussian':
             print("Using Gaussian Adaptive Threshold")
@@ -73,61 +75,25 @@ class CVTracer:
         else:
             print("Using Non-Inverted Binary Threshold")
             self.threshType     = cv2.THRESH_BINARY
-        self.min_area       = min_area
+        self.min_area       = max(min_area,1)
         self.max_area       = max_area
+        self.ideal_area     = (min_area+max_area)/2
+        self.max_frame2frame_distance = max_frame2frame_distance
+        if self.max_frame2frame_distance == None:
+            # Maximum distance a fish can reasonably travel over a single frame.
+            # sqrt(max_area) works as a rough estimate for the body length.
+            self.max_frame2frame_distance = np.sqrt(self.max_area)*2
+        self.significant_displacement = significant_displacement
+        if significant_displacement == None:
+            self.significant_displacement = np.sqrt(self.max_area)*0.2
+    
         self.contours       = []
-        self.contour_list   = []
         self.contour_repeat = []
-
-        # initialize lists for current and previous coordinates
-        self.n_ind          = trial.group.n
-        print(" Group of %i" % self.n_ind)
-        self.coord_now      = []
-        self.coord_pre      = []
-        self.ind_pre_now    = []
-        self.trail          = []
-        self.len_trail      = len_trail
-        self.contour_extent = []
-        self.contour_solidity = []
-        self.contour_major_axis = []
-        self.contour_minor_axis = []
-
+        self.moments        = []
+        self.df             = self.trial.df
+        
         self.colors = color_list     
-#        colors = plt.cm.hsv(np.linspace(0,1,self.n_ind+1))[:-1]
-#        colors = [tuple(int(255*x) for x in color) for color in colors]
-#        self.colors = colors
         
-        
-    def print_title(self):
-        sys.stdout.write("\n\n")
-        sys.stdout.write("\t   ###########################################################\n")
-        sys.stdout.write("\t   #                                                         #\n")
-        sys.stdout.write("\t   #      ___ __   __  _____  ___    _     ___  ___  ___     #\n")
-        sys.stdout.write("\t   #     / __\\\ \ / / |__ __|| _ \  / \   / __|| __|| _ \    #\n")
-        sys.stdout.write("\t   #    | (__  \ V / -  | |  |   / / ^ \ | (__ | _| |   /    #\n")
-        sys.stdout.write("\t   #     \___|  \_/     |_|  |_|_\/_/ \_\ \___||___||_|_\    #\n")
-        sys.stdout.write("\t   #                                      v2.0, sept 2019    #\n")
-        sys.stdout.write("\t   #                                                         #\n")
-        sys.stdout.write("\t   #                                  press <esc> to exit    #\n")
-        sys.stdout.write("\t   #                                                         #\n")
-        sys.stdout.write("\t   ###########################################################\n")
-        sys.stdout.write("\n")
-        sys.stdout.write("\t                                 adam patch, fau, jupiter 2019\n")
-        sys.stdout.write("\t                              github.com/patchmemory/cv-tracer\n")
-        sys.stdout.write(" \n\n")
-        sys.stdout.write("\t       Tracing %i fish using video, \n" % self.n_ind)
-        sys.stdout.write("\t         %s \n" % (self.trial.video_file))
-        sys.stdout.write(" \n\n")
-        sys.stdout.write("\t       Writing output to \n")
-        sys.stdout.write("\n")
-        sys.stdout.write("\t         video: \n" )
-        sys.stdout.write("\t           %s \n" % (self.trial.traced_file))
-        sys.stdout.write("\t         data: \n" )
-        sys.stdout.write("\t           %s \n" % (self.trial.output_dir))
-        sys.stdout.write(" \n\n")
-        sys.stdout.flush()
-
-
 
     ############################
     # cv2.VideoCapture functions
@@ -262,7 +228,6 @@ class CVTracer:
             plt.hist(self.frame.ravel()[self.frame.ravel() > 0],256)
             plt.show()
         
-        
             plt.title("Blurred grayscale histogram")
             plt.hist(blur.ravel()[blur.ravel() > 0],256)
             plt.show()
@@ -284,263 +249,100 @@ class CVTracer:
     
     def detect_contours(self):
         self.threshold_detect()
-        # Note the [-2:] to specify the last two fields regardless of version
+        # The [-2:] makes this work with openCV versions 3 and 4.
         self.contours, hierarchy = cv2.findContours( self.thresh, 
                                                      cv2.RETR_TREE, 
                                                      cv2.CHAIN_APPROX_SIMPLE )[-2:]
 
-        # test found contours against area constraints
-        i = 0
-        while i < len(self.contours):
-            area = cv2.contourArea(self.contours[i])
-            if area < self.min_area or area > self.max_area:
-                del self.contours[i]
-            else:
-                i += 1
-
-
-    def analyze_contours(self):
-        self.coord_pre = self.coord_now.copy()
-        self.coord_now = []
-        for contour in self.contours:
-            M = cv2.moments(contour)
-    
-            if M['m00'] != 0:
-                cx   = M['m10'] / M['m00']
-                cy   = M['m01'] / M['m00']
-                mu20 = M['m20'] / M['m00'] - pow(cx,2)
-                mu02 = M['m02'] / M['m00'] - pow(cy,2)
-                mu11 = M['m11'] / M['m00'] - cx*cy
-            else:
-            	cx = 0
-            	cy = 0
-            ry = 2 * mu11
-            rx = mu20 - mu02
-            theta = 0.5 * np.arctan2(ry, rx)
-            self.coord_now.append([cx, cy, theta])
-
-            if len(contour) > 4:
-                area = cv2.contourArea(contour)
-                x,y,w,h = cv2.boundingRect(contour)
-                rect_area = w*h
-                hull_area = cv2.contourArea(cv2.convexHull(contour))
-                (x,y),(ellax_minor,ellax_major), angle = cv2.fitEllipse(contour)
-                self.contour_extent.append(float(area)/rect_area)
-                self.contour_solidity.append(float(area)/hull_area)
-                self.contour_major_axis.append(float(ellax_major))
-                self.contour_minor_axis.append(float(ellax_minor))
+        # Dismiss contours with out-of-bounds area.
+        self.contours = [ c for c in self.contours if 
+                          self.min_area<=cv2.contourArea(c)<=self.max_area ]
         
-    def correct_theta(self):
-        if len(self.trail) < 1:
-            return
-
-        for i in range(len(self.coord_now)):
-            cx    = self.coord_now[i][0]
-            cy    = self.coord_now[i][1]
-            theta = self.coord_now[i][2]
+        # Compute contour moments.
+        self.moments  = [ cv2.moments(c) for c in self.contours ]
+        
+        # Compute tentative new coordinates.
+        # If there aren't enough contours, fill with NaN.
+        n = max(len(self.contours),self.trial.n_ind)
+        self.new = np.empty((n,4),dtype=float)
+        self.new.fill(np.nan)
+        for i,M in enumerate(self.moments):
+            x     = M['m10'] / M['m00']
+            y     = M['m01'] / M['m00']
+            theta = 0.5 * np.arctan2(2*M['mu11'], M['mu20']-M['mu02'])
+            area  = M['m00']
             
-            cx_p    = self.coord_pre[i][0]
-            cy_p    = self.coord_pre[i][1]
-            theta_p = self.coord_pre[i][2]
+#            # This is a bit more costly but provides the semi-axes as well.
+#            mu = np.array([[M['mu20'],M['mu11']],[M['mu11'],M['mu02']]])/M['m00']
+#            eVal,eVec = la.eigh(mu)
+#            theta = np.arctan2(eVec[1,1],eVec[1,0])
             
-            vx = ( cx - cx_p ) / 2
-            vy = ( cy - cy_p ) / 2
-            speed = np.sqrt(math.pow(vx,2) + math.pow(vy,2))
-          
-            # note speed here is in pixels, so this is somewhat arbitrary until
-            # we know the drift speed in pixels/frame, but basically I will 
-            pix_speed_min = 1
-            if ( speed > pix_speed_min):
-                dot_prod = vx * np.cos(theta) + vy * np.sin(theta) 
-                if dot_prod < 0:
-                    theta = np.mod( theta + np.pi, 2*np.pi )
-            else:
-                dot_prod = np.cos(theta_p) * np.cos(theta) + np.sin(theta_p) * np.sin(theta) 
-                if dot_prod < 0:
-                    theta = np.mod( theta + np.pi, 2*np.pi)
-            self.coord_now[i][2] = theta 
-
-
-    # kmeans_contours uses contour traces and runs clustering algorithm on all 
-    # of them to best locate different individuals, works OK for small-n_ind
-    def kmeans_contours(self):
-        # convert contour points to arrays
-        clust_points = np.vstack(self.contours)
-        clust_points = clust_points.reshape(clust_points.shape[0], clust_points.shape[2])
-        # run KMeans clustering
-        kmeans_init = 50
-        # if len(clust_points) > 0:
-        kmeans = KMeans( n_clusters = self.n_ind, 
-                         random_state = 0, 
-                         n_init = kmeans_init ).fit(clust_points)
-        theta = -13
-        del self.coord_now[:]
-        for cc in kmeans.cluster_centers_:
-            x = int(tuple(cc)[0])
-            y = int(tuple(cc)[1])
-            self.coord_now.append([x,y,theta])
-        # else:
-        #     for i in range(self.trial.n):
-        #         self.coord_now.append([0,0,0])
-    
-    
-    def trail_update(self):
-        self.trail.append(self.coord_now)
-        if len(self.trail) > self.len_trail:
-            self.trail.pop(0)
-    
-    
-    # calculate predicted trajectory based on previous three points 
-    def predict_next(self):
-        if len(self.coord_pre)==0:
-            return [[np.nan,np.nan,np.nan] for i in range(self.n_ind)]
-        prediction = self.coord_pre.copy()
-        for i in range(len(self.coord_pre)):
-            if len(self.trail) > 2:
-                prediction[i][0] = ( self.trail[-1][i][0]
-                                        + ( 3*self.trail[-1][i][0] 
-                                          - 2*self.trail[-2][i][0] 
-                                          -   self.trail[-3][i][0] ) / 4. )
-                prediction[i][1] = ( self.trail[-1][i][1] 
-                                        + ( 3*self.trail[-1][i][1] 
-                                          - 2*self.trail[-2][i][1] 
-                                          -   self.trail[-3][i][1] ) / 4. )
-            elif len(self.trail)==2:
-                prediction[i][0] = ( 2*self.trail[-1][i][0]   
-                                     - self.trail[-2][i][0] )
-                prediction[i][1] = ( 2*self.trail[-1][i][1]                                    
-                                     - self.trail[-2][i][1] )
-            elif len(self.trail)==1:
-                prediction[i][0] = self.trail[-1][i][0]
-                prediction[i][1] = self.trail[-1][i][1]
-            else:
-                prediction[i][0] = np.nan
-                prediction[i][1] = np.nan
-        return prediction
-    
+            self.new[i] = [x, y, theta, area]
+        
 
     #############################
     # Frame-to-frame functions
     #############################
 
 
-    # After determinining the coordinates of each fish, update
-    # update the trial object with those coordinates
-    def update_trial(self):
-        tstamp = 1.*self.frame_num / self.fps
-        self.trial.group.add_entry(tstamp, self.coord_now)
-
-
     # this is the main algorithm the tracer follows when trying 
     # to associate individuals identified in this frame with 
     # those identified in the previous frame/s
-    def connect_frames(self):        
-        # for initial frames, make "educated guesses" to at 
-        # least get the tracking started
-        if len(self.contours)>0 and self.tracked_frames() < self.len_trail:
-            self.kmeans_contours()
-            if self.tracked_frames() > 1:
-                self.reorder_hungarian()
+    def connect_frames(self):
+        
+        # If there is no previous frame, use the n_ind best contours.
+        # If there aren't enough contours, fill with NaN.
+        if len(self.df) == 0:
+            if len(self.new)>self.trial.n_ind:
+                # If there are too many contours, reorder by "ideality" (for now 
+                # closeness to ideal area) then pick the first n_ind.
+                # TODO: Take another look at the cluster algorithm approach used 
+                # in cvtracer. What situation is it meant to address? Is that idea 
+                # that some fish may be broken into multiple contours?
+                d = np.absolute(self.new[:,3]-self.ideal_area) # distance ideal contour area
+                self.new = self.new[np.argsort(d)][:self.trial.n_ind]
         else:
-            self.connect_coordinates()   
-        # regardless of method, check for misdirection
-        self.correct_theta()
-        # once new coordinates have been determined, update trail
-        self.trail_update()
-    
-    
-    def connect_coordinates(self):
-        # if tracer found correct number of contours, assume proper tracing 
-        # and connect to previous frame based on hugarian min-dist algorithm
-        if len(self.contours) == self.n_ind:
-            self.reorder_hungarian()            
-        # if no contours found, make guess based on trail prediction
-        elif len(self.contours) == 0:
-            self.coord_now = self.predict_next()
-        # for all other cases, work with occlusions and 
-        # incorrectly identified contours
-        else:
-            self.handle_contour_issues()
-                
+            # If there is a valid previous frame, first set missing positions aside,
+            # then solve assignment problem on remaining positions.
+            # TODO: Bring back prediction of positions based on past positions.
+            old     = self.df.iloc[-1].values.reshape((self.trial.n_ind,4))
+            xy_old  = old[:,:2]
+            xy_new  = self.new[:,:2]
+            d       = cdist(xy_old,xy_new)
+            # Putting a high cost on connections involving a missing position (NaN)
+            # effectively makes the algorithm match all valid contours first.
+            # This likely causes problems when multiple fish are lost.
+            # Using the last known position would probably be better.
+            d[np.isnan(d)] = 1e8
+            Io,In = linear_sum_assignment(d)
+            self.new = self.new[In]
             
-    def handle_contour_issues(self):
-        # first arrange data in structure to fit with cdist()
-        self.coord_pre = self.predict_next()
-        
-        xy_pre = np.array(self.coord_pre)[:,[0,1]]
-        xy_now = np.array(self.coord_now)[:,[0,1]]
-
-        # calculate the distance matrix
-        dist_arr = cdist(xy_pre,xy_now)
-
-        # find coordinate from previous frame that most readily
-        # match with current set of contours
-        self.ind_pre_now = [ 0 for i in range(len(self.coord_pre)) ]
-        for i in range(len(self.coord_pre)):
-            index = np.argmin(dist_arr[i]) # i'th array has distances to predictions from pre
-            self.ind_pre_now[i] = index # for i, what is corresponding index of pre (j)
-
-        # find any unclaimed individuals and place in a list
-        ind_unclaimed = []
-        for i in range(len(self.coord_now)):
-            for j in range(len(self.coord_pre)):
-                if i == self.ind_pre_now[j]:
-                    break # exits current for loop, contour is located
-                if j == len(self.coord_pre) - 1:
-                    ind_unclaimed.append(i)
-
-        # for those unmatched individuals, connect them with 
-        # contour coordinates even if other individuals have 
-        # already been associated with this point
-        for i in range(len(ind_unclaimed)):
-            index = np.argmin(dist_arr[:,ind_unclaimed[i]])
-            self.ind_pre_now[index] = ind_unclaimed[i]
-
-        # then reorder coordinates based on each's previous ID
-        meas_now_tmp = self.coord_now
-        self.coord_now = self.coord_pre
-        for i in range(len(self.coord_now)):
-            self.coord_now[i] = meas_now_tmp[self.ind_pre_now[i]]
-
-        # and then just for the sake of it starting to think
-        # about these particular contours and how we can use 
-        # them to better locate individuals in close proximity
-        self.contour_repeat = []
-        contour_deficit = len(self.coord_pre) - len(self.coord_now)
-        sorted_ind_pre_now = sorted(self.ind_pre_now)
-        i = 0  
-        while len(self.contour_repeat) < contour_deficit:
-            i += 1
-            if sorted_ind_pre_now[i] == sorted_ind_pre_now[i-1]:
-                self.contour_repeat.append(sorted_ind_pre_now[i])
+            # TODO: When a fish is missing look for its last known position. 
+            # Even better: use last few known positions to predict current position.
+            
+            # TODO: Identify cases in which a disappeared fish likely
+            # merged contours with another fish (e.g. detect likely occlusions).
+            # This will involve looking for area changes and making sure it doesn't
+            # involve a jump longer than max_frame2frame_distance.
         
         
-    def reorder_hungarian(self):
-        # try this out... do hungarian algorithm on prediction of next step
-        # ... just remove if it is making a mess...
-        #self.coord_pre = self.predict_next()
-        # reorder contours based on results of the hungarian algorithm 
-        # (originally in tracktor, but i've reorganized)
-        row_ind, col_ind = self.hungarian_algorithm()
-        equal = np.array_equal(col_ind, list(range(len(col_ind))))
-        if equal == False:
-            current_ids = col_ind.copy()
-            reordered = [i[0] for i in sorted(enumerate(current_ids), key=lambda x:x[1])]
-            self.coord_now = [x for (y,x) in sorted(zip(reordered,self.coord_now))]
-
-
-    def hungarian_algorithm(self):
-        xy_pre = np.array(self.coord_pre)[:,[0,1]]
-        xy_now = np.array(self.coord_now)[:,[0,1]]    
-        xy_pre = list(xy_pre)
-        xy_now = list(xy_now)
-        cost   = cdist(xy_pre, xy_now)
+            # Fix spurious orientation reversals:
+            # 1. Look for continuity with previous frame.
+            dtheta  = self.new[:,2]-old[:,2]
+            I       = ~np.isnan(dtheta)
+            self.new[I,2] -= np.pi*np.rint(dtheta[I]/np.pi)
+            # 2. Align direction with motion unless it's too slow.
+            dxy     = self.new[:,:2]-old[:,:2]
+            dot     = dxy[:,0]*np.cos(self.new[:,2])+dxy[:,1]*np.sin(self.new[:,2])
+            I       = (dot<-self.significant_displacement)
+            self.new[I,2] += np.pi
+            # TODO: Measure the orientation directly from the contour, probably by 
+            # looking at the sign of the third moment along the unsigned orientation.
         
-        row_ind, col_ind  =  linear_sum_assignment(cost)
-        return row_ind, col_ind
-
-
-
+        
+        self.df.loc[self.frame_num] = self.new.flatten()
+    
+        
     ############################
     # Masking functions
     ############################
@@ -644,8 +446,7 @@ class CVTracer:
     def show_current_frame(self):
         window_name = create_named_window('current frame')
         cv2.imshow(window_name,self.frame)
-        while wait_on_named_window(window_name,1)>=-1:
-            pass
+        wait_on_named_window(window_name)
         cv2.destroyAllWindows()
         return 1
 
@@ -657,7 +458,7 @@ class CVTracer:
             self.draw_tank(self.trial.tank)
         if all_contours:
             self.draw_contours(contour_color, contour_thickness)
-        elif len(self.contour_list) != self.n_ind:
+        elif len(self.contours) != self.trial.n_ind:
             self.draw_contour_repeat(contour_color, contour_thickness)
         if points:
             self.draw_points()
@@ -668,80 +469,55 @@ class CVTracer:
 
 
     def draw_tstamp(self):
-        if self.RGB:
-            color = (0,0,0)
-        else:
-            color = 0
+        color = (0,0,0) if self.RGB else 0
         font = cv2.FONT_HERSHEY_SCRIPT_SIMPLEX
         t_str = "%02i:%02i:%02i.%02i" % ( 
                 int(self.frame_num / self.fps / 3600),
                 int(self.frame_num / self.fps / 60 % 60),
                 int(self.frame_num / self.fps % 60),
                 int(self.frame_num % self.fps * 100 / self.fps) )
-        
         cv2.putText(self.frame, t_str, (5,30), font, 1, color, 2)
 
     
     def draw_tank(self, tank):
-        if self.RGB:
-            cv2.circle(self.frame, (int(tank.col_c), int(tank.row_c)), int(tank.r),
-                       (0,0,0), thickness=7)
-        else:
-            cv2.circle(self.frame, (int(tank.col_c), int(tank.row_c)), int(tank.r),
-                       0, thickness=7)    
+        color = (0,0,0) if self.RGB else 0
+        cv2.circle(self.frame, (int(tank.col_c), int(tank.row_c)), int(tank.r),
+                   color, thickness=7)
 
-
-    def draw_contour_repeat(self,contour_color=(0,0,0), contour_thickness=1):
-        if self.RGB:
-            color = contour_color
-        else:
-            color = 0
-        for i in self.contour_list:
+    
+    # Draw problematic contours.
+    def draw_contour_repeat(self,contour_color=(0,255,0), contour_thickness=1):
+        color = contour_color if self.RGB else 0
+        for i in self.contours:
             cv2.drawContours(self.frame, self.contour_repeat, i, color, int(contour_thickness))
 
 
-    # Draw every contour (useful for detection quality control/parameter adjustment).
-    def draw_contours(self,contour_color=(0,0,0), contour_thickness=1):
-        if self.RGB:
-            color = contour_color
-        else:
-            color = 0
+    # Draw every contour.
+    def draw_contours(self,contour_color=(0,0,255), contour_thickness=1):
+        color = contour_color if self.RGB else 0
         cv2.drawContours(self.frame, self.contours, -1, color, int(contour_thickness))
 
 
+    # Draw center of each individual as a dot.
     def draw_points(self):
-        self.coord_now = np.array(self.coord_now)
-        for i in range(len(self.coord_now)):
-          if self.RGB:
-            cv2.circle(self.frame, tuple([int(x) for x in self.coord_now[i,(0,1)]]), 
-                       3, self.colors[i%len(self.colors)], -1, cv2.LINE_AA)
-          else:
-            cv2.circle(self.frame, (int(self.coord_now[i][0]), int(self.coord_now[i][1])), 
-                       3, 0, -1)
-        self.coord_now = list(self.coord_now)
+        XY = self.new[:,:2]
+        for i,(x,y) in enumerate(XY):
+            if not (np.isnan(x) or np.isnan(y)):
+                x,y = int(x),int(y)
+                color = self.colors[i%len(self.colors)] if self.RGB else 0
+                cv2.circle(self.frame, (x,y), 3, color, -1, cv2.LINE_AA)
 
 
-    def draw_directors(self):
-        self.coord_now = np.array(self.coord_now)
-        self.coord_pre = np.array(self.coord_pre)
-        vsize = 10
-        for i in range(len(self.coord_now)):
-            cx = self.coord_now[i][0]
-            cy = self.coord_now[i][1]
-            theta = self.coord_now[i][2]
+    # Draw orientation of each individual as an arrow.
+    def draw_directors(self, arrow_size=20):
+        XY = self.new[:,:2]
+        Th = self.new[:,2]
+        U  = arrow_size/2*np.array([np.cos(Th),np.sin(Th)]).T
+        for i in range(self.trial.n_ind):
+            if not np.isnan(XY[i]).any():
+                color = self.colors[i%len(self.colors)] if self.RGB else 255
+                (x1,y1),(x2,y2) = (XY[i]-U[i]).astype(int),(XY[i]+U[i]).astype(int)
+                cv2.arrowedLine(self.frame, (x1,y1), (x2,y2), color=color, 
+                                thickness=2, tipLength=0.3)
 
-            # coordinates for director line segement
-            x0, y0 = int(cx - vsize*np.cos(theta)), int(cy - vsize*np.sin(theta))
-            x1, y1 = int(cx + vsize*np.cos(theta)), int(cy + vsize*np.sin(theta))    
-            
-#            if self.RGB:
-#                cv2.line(self.frame, (x0, y0), (x1, y1), self.colors[i%len(self.colors)], 2)
-#                cv2.circle(self.frame, (x1, y1), 3, self.colors[i%len(self.colors)], -1)
-#            else:
-#                cv2.line(self.frame, (x0, y0), (x1, y1), 0, 2)
-#                cv2.circle(self.frame, (x1, y1), 3, 255, -1)
-            
-            c = self.colors[i%len(self.colors)] if self.RGB else 255
-            cv2.arrowedLine(self.frame, (x0, y0), (x1, y1), 
-                            color=c, thickness=2, tipLength=0.3)
 
