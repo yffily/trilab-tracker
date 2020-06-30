@@ -516,7 +516,7 @@ class CVTracer:
     def draw_tank(self, tank):
         color = (0,0,0) if self.RGB else 0
         cv2.circle(self.frame, (int(tank.col_c), int(tank.row_c)), int(tank.r),
-                   color, thickness=7)
+                   color, thickness=4)
 
     
     # Draw problematic contours.

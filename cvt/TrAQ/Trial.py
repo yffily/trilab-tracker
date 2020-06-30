@@ -64,7 +64,7 @@ class Trial:
         try:
             f = open(fname, 'wb')
             pickle.dump(self.__dict__, f, protocol = 3)
-            sys.stdout.write("\n        Trial object saved as %s \n" % fname)
+            sys.stdout.write("\n       Trial object saved as %s \n" % fname)
             sys.stdout.flush()
             f.close()
             return True

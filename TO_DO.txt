@@ -1,7 +1,11 @@
 
+- There's something strange about the tank masking. When saving images of the various steps of processing one frame, it seems the tank shrinks.
+
 - Guess each fish's forward direction using the contour data (maybe the contour's third moments?). Right now I think we only use the velocity vector and frame continuity.
 
 - When aligning a fish's orientation with its velocity, consider using a velocity averaged over the past few frames to avoid short-lived position errors unduly reversing the direction.
+
+- Previously time derivatives were computed with a 2nd order centered difference scheme. Now I'm just using pandas' diff. It may be useful to allow specifying a derivation kernel, maybe using numpy.convolve.
 
 - Right now pretty much everything is in verbose mode. Create a silent mode, or possibly versbosity levels.
 
