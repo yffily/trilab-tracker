@@ -29,9 +29,9 @@ class Trial:
             print('Warning: output files will be written in the directory of the input video.')
             self.output_dir = os.path.split(video_file)[0]
         
-        self.trial_file = os.path.join(output_dir,'trial.pik')
+        self.trial_file  = os.path.join(output_dir,'trial.pik')
         self.traced_file = os.path.join(output_dir,'traced.mp4')
-        self.tank_file = os.path.join(output_dir,'tank.pik')
+        self.tank_file   = os.path.join(output_dir,'tank.pik')
         
         self.tank        = Tank(tank_radius)
         self.tank.load_or_locate_and_save(self.tank_file,self.video_file)

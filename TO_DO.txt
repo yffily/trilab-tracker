@@ -1,15 +1,10 @@
 
 - Guess each fish's forward direction using the contour data (maybe the contour's third moments?). Right now I think we only use the velocity vector and frame continuity.
 
-- Add an optional frame range to use for background computation. It would avoid having to recut raw videos in which the camera moved near the beginning or the end.
+- When aligning a fish's orientation with its velocity, consider using a velocity averaged over the past few frames to avoid short-lived position errors unduly reversing the direction.
 
 - Right now pretty much everything is in verbose mode. Create a silent mode, or possibly versbosity levels.
 
-- Work on CVTracer::connect_frames. There seems to be an occasional issue in which two fish swap ID's after one was lost for a few frames even though their positions haven't changed enough for there to be any ambiguity as to which is which.
-
-- Make simple background subtraction part of TrAQ. 
-
-- [?] Try out regular (non-adaptive) thresholding in combination with simple background subtraction.
-
 - Fix aspect ratio of cv2 windows in Windows10.
 
+- [?] Try out regular (non-adaptive) thresholding in combination with simple background subtraction.

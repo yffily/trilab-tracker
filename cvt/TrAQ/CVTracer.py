@@ -19,22 +19,24 @@ class CVTracer:
     
     def __init__(self, trial, n_pixel_blur = 3, block_size = 15, 
                  threshold_offset = 13, min_area = 20, max_area = 400, 
-                 max_frame2frame_distance = None, significant_displacement = None,
-                 adaptiveMethod = 'gaussian', threshType = 'inv', RGB = False, 
-                 MOG2 = False, MOG_history = 1000, MOG_varThreshold = 25,
-                 MOG_initial_skip = 10, MOG_learning_rate = 0.01,
+                 max_frame2frame_distance = None, significant_displacement = None, 
+                 adaptiveMethod = 'gaussian', threshType = 'inv', RGB = True, 
+                 bkgSub_options = dict( n_training_frames = 500, 
+                                        t_start = 0, t_end = -1,
+                                        contrast_factor = 4 ), 
                  live_preview = False, GPU = False ):
 
         self.trial          = trial
         self.fvideo_in      = trial.video_file
-        self.fvideo_ext     = "mp4"
-        self.fvideo_out     = os.path.join(trial.output_dir, 'traced.mp4')
+        
+        codecs              = {'mp4':'mp4v','avi':'DIVX'}
+        output_ext          = 'mp4' # 'avi'
+        self.codec          = codecs[output_ext]
+        self.fvideo_out     = os.path.join(trial.output_dir, 'traced.'+output_ext)
         trial.traced_file   = self.fvideo_out
 
         # initialize video playback details
         self.RGB            = RGB
-        self.codec          = 'mp4v'
-        if ( self.fvideo_ext == ".avi" ): self.codec = 'DIVX' 
         self.online_viewer  = live_preview
         self.online_window  = 'CVTracer live tracking'
         self.GPU            = GPU
@@ -48,14 +50,14 @@ class CVTracer:
         self.fps            = trial.fps
         self.init_video_capture()
         
-        self.MOG_history    = MOG_history
-        self.MOG_varThreshold = MOG_varThreshold
-        self.MOG_initial_skip = MOG_initial_skip
-        self.MOG_learning_rate = MOG_learning_rate
-        if MOG2:
-            self.MOG2 = True
-            print("Using MOG2 Background Subtraction")
-            self.init_background_subtractor()
+        self.background     = None
+        self.bkgSub_options = bkgSub_options
+        trial.bkg_file      = os.path.join(trial.output_dir,'background.npz')
+        trial.bkg_img_file  = os.path.join(trial.output_dir,'background.png')
+        if not self.load_background(trial.bkg_file):
+            self.compute_background()
+            self.save_background(trial.bkg_file)
+        cv2.imwrite(trial.bkg_img_file,self.background)
 
         # initialize contour working variables
         self.n_pix_avg      = n_pixel_blur
@@ -64,16 +66,16 @@ class CVTracer:
         self.offset         = threshold_offset
         self.threshMax      = 100
         if adaptiveMethod == 'gaussian':
-            print("Using Gaussian Adaptive Threshold")
+#            print("Using Gaussian Adaptive Threshold")
             self.adaptiveMethod = cv2.ADAPTIVE_THRESH_GAUSSIAN_C
         else:
-            print("Using Mean Adaptive Threshold with [%i, 0]" % self.threshMax)
+#            print("Using Mean Adaptive Threshold with [%i, 0]" % self.threshMax)
             self.adaptiveMethod = cv2.ADAPTIVE_THRESH_MEAN_C
         if threshType == 'inv':
-            print("Using Inverted Binary Threshold with [0, %i]." % self.threshMax)
+#            print("Using Inverted Binary Threshold with [0, %i]." % self.threshMax)
             self.threshType     = cv2.THRESH_BINARY_INV
         else:
-            print("Using Non-Inverted Binary Threshold")
+#            print("Using Non-Inverted Binary Threshold")
             self.threshType     = cv2.THRESH_BINARY
         self.min_area       = max(min_area,1)
         self.max_area       = max_area
@@ -132,20 +134,18 @@ class CVTracer:
         sys.stdout.flush()
 
 
-    def tstamp(self):
-        return float(self.frame_num)/self.fps
-
-
     def n_frames(self):
         return int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1
 
-    
+
     def tracked_frames(self):
         return self.frame_num - self.frame_start
+
 
     def set_frame(self, i):
         self.frame_num = i
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+
 
     def get_frame(self):
         if self.cap.isOpened():
@@ -157,19 +157,63 @@ class CVTracer:
                 return True
         return False
 
-
-    def init_background_subtractor(self):
-        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-                                    history=self.MOG_history, 
-                                    varThreshold=self.MOG_varThreshold,
-                                    detectShadows=False)
-        for i in range(0,self.MOG_history,self.MOG_initial_skip):
-            self.set_frame(self.frame_start + self.MOG_history - i)
-            self.get_frame()
-            self.print_current_frame()
-            self.mask_tank()
-            self.bg_subtractor.apply(self.frame,learningRate=self.MOG_learning_rate)
     
+    def load_background(self, bkg_file):
+        ext = os.path.splitext(bkg_file)[1]
+        if os.path.exists(bkg_file):
+            if ext=='.npy':
+                self.background = np.load(bkg_file)
+                return True
+            if ext=='.npz':
+                # Assume there's only one variable in the file.
+                self.background = next(iter(np.load(bkg_file).values()))
+                return True
+        return False
+
+
+    def save_background(self, bkg_file):
+        ext = os.path.splitext(bkg_file)[1]
+        if ext=='.npy':
+            np.save(bkg_file,self.background)
+            return True
+        if ext=='.npz':
+            np.savez_compressed(bkg_file,background=self.background)
+            return True
+        return False
+
+
+    def compute_background(self):
+        
+        sys.stdout.write("       Computing background...") 
+        sys.stdout.flush()
+        
+        n_frames   = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps        = int(self.cap.get(cv2.CAP_PROP_FPS))
+        t_start    = self.bkgSub_options['t_start']
+        t_end      = self.bkgSub_options['t_end']
+        n_training = self.bkgSub_options['n_training_frames']
+        i_start    = max( 0, int(t_start*fps) )
+        i_end      = min( n_frames, int(t_end*fps) if t_end>0 else n_frames) 
+        training_frames = np.linspace(i_start, i_end-1, n_training, dtype=int)
+        
+        self.get_frame()
+        self.background = np.zeros(self.frame.shape)
+        count = 0
+        for i in training_frames:
+            self.set_frame(i)
+            if self.get_frame():
+                self.background += self.frame
+                count           += 1
+        self.background /= count
+
+
+    def subtract_background(self):
+        if type(self.background) != type(None):
+            self.frame  = self.frame-self.background
+            self.frame *= self.bkgSub_options['contrast_factor']
+            self.frame  = np.absolute(self.frame)
+            self.frame  = (255 - np.minimum(255, self.frame)).astype(np.uint8)
+            
     
     def init_live_preview(self):
         if (self.online_viewer):
@@ -359,16 +403,6 @@ class CVTracer:
         
         cv2.circle(tank_mask, (col_c,row_c), R, (255, 255, 255), thickness=-1)
         self.frame = cv2.bitwise_and(self.frame, tank_mask)
-
-
-    def mask_background(self):
-        self.fgmask = self.bg_subtractor.apply(self.frame)
-#        fgmask_bin = self.fgmask > 1
-#        frame_nobg = np.full_like(self.frame,255) 
-#        frame_nobg[fgmask_bin] = self.frame[fgmask_bin]
-#        self.frame = frame_nobg
-        self.frame[self.fgmask<=1] = 255
-        return
 
 
     def detect_clusters(self, eps=2):

@@ -23,7 +23,7 @@ class Tank:
 
     def print_info(self):
         print("")
-        print("        Tank information (pixels)")
+        print("       Tank information (pixels)")
         print("            row: %4.2e " % self.row_c )
         print("            col: %4.2e " % self.col_c )
         print("              R: %4.2e " % self.r     )
@@ -38,25 +38,21 @@ class Tank:
     
 
     def save(self, fname):
-        f = open(fname, 'wb')
-        self.release_capture()
-        pickle.dump(self.__dict__, f, protocol = 3)
-        sys.stdout.write("\n        Tank object saved as %s \n" % fname)
-        sys.stdout.flush()
-        f.close()
+        with open(fname, 'wb') as f:
+            self.release_capture()
+            pickle.dump(self.__dict__, f, protocol = 3)
 
 
     def load(self, fname):
         try:
-            f = open(fname, 'rb')
-            tmp_dict = pickle.load(f)
-            f.close()
+            with open(fname, 'rb') as f:
+                tmp_dict = pickle.load(f)
             self.__dict__.update(tmp_dict) 
-            sys.stdout.write("\n        Tank object loaded from %s \n" % fname)
+            sys.stdout.write("\n       Tank object loaded from %s \n" % fname)
             sys.stdout.flush()
             return True
         except:
-            sys.stdout.write("\n        Tank not found %s \n" % fname)
+            sys.stdout.write("\n       Tank not found %s \n" % fname)
             sys.stdout.flush()
             return False
 
@@ -123,7 +119,7 @@ class Tank:
         cv2.destroyAllWindows()
         self.release_capture()
         if msg!=None:
-            sys.stdout.write(f'\n        {msg}.\n')
+            sys.stdout.write(f'\n       {msg}.\n')
             sys.stdout.flush()
         return False
     
