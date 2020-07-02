@@ -1,6 +1,6 @@
 import os
 import sys
-#import pickle
+import pickle
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,6 +42,27 @@ def wait_on_named_window(name,delay=-1):
         if k!=-1:
             return k
     return -1
+
+#========================================================
+# Save and load.
+
+def save_txt(filename, data_dict):
+    txt = '\n'.join( f'{key} = {value}' for key,value in data_dict.items() )
+    with open(filename,'w') as f:
+        f.write(txt)
+
+def load_txt(filename):
+    with open(filename,'r') as f:
+        return dict( line.strip().split(' = ') for line in f )
+
+def save_pik(filename, data_dict):
+    with open(filename,'wb') as f:
+        pickle.dump(data_dict, f, protocol = 3)
+
+def load_pik(filename):
+    data_dict = {}
+    with open(filename,'rb') as f:
+        return pickle.load(f)
 
 #========================================================
 # Plotting.

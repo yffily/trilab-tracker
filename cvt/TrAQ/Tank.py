@@ -1,34 +1,25 @@
 import sys
+import os
+import pickle
 import numpy as np
 import cv2
-import pickle
-import os
 from cvt.utils import *
 
 
 class Tank:
 
-    def __init__(self, r_cm = 1.):
+    def __init__(self):
+        self.x_px    = 0
+        self.y_px    = 0
+        self.r_px    = 0
         self.points  = np.zeros((3,2))    
         self.n_point = 0
-        self.row_c   = 0
-        self.col_c   = 0
-        self.r       = 0
-        self.r_cm    = r_cm
         self.found   = False
         self.frame   = None
         self.wname   = None
         self.cap     = None
 
 
-    def print_info(self):
-        print("")
-        print("       Tank information (pixels)")
-        print("            row: %4.2e " % self.row_c )
-        print("            col: %4.2e " % self.col_c )
-        print("              R: %4.2e " % self.r     )
-        print("")
-    
     def release_capture(self):
         try:
             self.cap.release()
@@ -38,30 +29,22 @@ class Tank:
     
 
     def save(self, fname):
-        with open(fname, 'wb') as f:
-            self.release_capture()
-            pickle.dump(self.__dict__, f, protocol = 3)
-
+        keys = [ 'x_px', 'y_px', 'r_px', 'points' ]
+        save_pik( fname, { k:self.__dict__[k] for k in keys } )
+            
 
     def load(self, fname):
         try:
-            with open(fname, 'rb') as f:
-                tmp_dict = pickle.load(f)
-            self.__dict__.update(tmp_dict) 
-            sys.stdout.write("\n       Tank object loaded from %s \n" % fname)
-            sys.stdout.flush()
+            self.__dict__.update(load_pik(fname))
             return True
         except:
-            sys.stdout.write("\n       Tank not found %s \n" % fname)
-            sys.stdout.flush()
             return False
-
-
+    
+    
     #########################
     # Tank locator GUI
     #########################
     
-    # !!! It seems the x,y mouse coordinates received by the callback are the column index and row index respectively, i.e., x=horizontal distance from the top left corner and y=vertical distance from top left corner.
     
     def add_circle_point(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -86,13 +69,13 @@ class Tank:
 
     def select_circle(self, event, x, y, flags,param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            if np.sqrt(pow(x-self.col_c,2)+pow(y-self.row_c,2)) > self.r:
+            if np.sqrt(pow(x-self.x_px,2)+pow(y-self.y_px,2)) > self.r_px:
                 self.found = False
-                cv2.circle(self.frame, (int(self.col_c),int(self.row_c)), int(self.r), (0,0,255), -1)
+                cv2.circle(self.frame, (int(self.x_px),int(self.y_px)), int(self.r_px), (0,0,255), -1)
                 cv2.imshow(self.wname,self.frame)
                 k = wait_on_named_window(self.wname)
             else:
-                cv2.circle(self.frame, (int(self.col_c),int(self.row_c)), int(self.r), (0,255,0), -1)
+                cv2.circle(self.frame, (int(self.x_px),int(self.y_px)), int(self.r_px), (0,255,0), -1)
                 cv2.imshow(self.wname,self.frame)
                 k = wait_on_named_window(self.wname)
 
@@ -109,9 +92,10 @@ class Tank:
             m.append(-1./slope)
             b.append(midpoint[i][1]-m[i]*midpoint[i][0])
  
-        self.col_c = (b[1]-b[0])/(m[0]-m[1])
-        self.row_c = m[0]*self.col_c + b[0]
-        self.r = np.sqrt(pow(self.col_c-self.points[0][0],2) + pow(self.row_c-self.points[0][1],2))
+        self.x_px = (b[1]-b[0])/(m[0]-m[1])
+        self.y_px = m[0]*self.x_px + b[0]
+        self.r_px = np.sqrt( pow(self.x_px-self.points[0][0],2) +
+                             pow(self.y_px-self.points[0][1],2) )
         self.found = True
 
     
@@ -149,8 +133,8 @@ class Tank:
             if wait_on_named_window(self.wname) == -2:
                 return self.interrupt('Tank detection interrupted.')
             # show results and allow user to choose if it looks right
-            cv2.circle(self.frame, (int(self.col_c),int(self.row_c)), int(self.r), (0,255,0), 2)
-            cv2.circle(self.frame, (int(self.col_c),int(self.row_c)), 3, (0,255,0), -1)
+            cv2.circle(self.frame, (int(self.x_px),int(self.y_px)), int(self.r_px), (0,255,0), 2)
+            cv2.circle(self.frame, (int(self.x_px),int(self.y_px)), 3, (0,255,0), -1)
             cv2.setMouseCallback(self.wname, self.select_circle)
             cv2.imshow(self.wname, self.frame)
             if wait_on_named_window(self.wname) == -2:
