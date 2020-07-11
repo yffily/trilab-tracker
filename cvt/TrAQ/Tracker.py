@@ -18,6 +18,7 @@ class Tracker:
                  t_start = 0, t_end = -1,  
                  n_pixel_blur = 3, block_size = 15, 
                  threshold_offset = 13, min_area = 20, max_area = 400, 
+                 max_aspect = 10, area_penalty = 1, 
                  max_frame2frame_distance = None, significant_displacement = None, 
                  adaptiveMethod = 'gaussian', threshType = 'inv', 
                  bkgSub_options = dict( n_training_frames = 500, 
@@ -38,9 +39,9 @@ class Tracker:
         self.init_video_input()
         self.t_start        = t_start
         self.t_end          = t_end
-        self.frame_start    = int(t_start*self.fps)
+        self.frame_start    = max(0, int(t_start*self.fps))
         self.frame_end      = int(t_end*self.fps) if t_end>0 else self.n_frames-1
-        self.frame_end      = max(self.frame_end-1, self.frame_end)
+        self.frame_end      = min(self.frame_end-1, self.frame_end)
         self.set_frame(self.frame_start-1)
         
         # Video output.
@@ -80,6 +81,8 @@ class Tracker:
         self.min_area       = max(min_area,1)
         self.max_area       = max_area
         self.ideal_area     = (min_area+max_area)/2
+        self.max_aspect     = max_aspect
+        self.area_penalty   = area_penalty
         
         self.max_frame2frame_distance = max_frame2frame_distance
         if self.max_frame2frame_distance == None:
@@ -304,12 +307,24 @@ class Tracker:
                                                      cv2.RETR_TREE, 
                                                      cv2.CHAIN_APPROX_SIMPLE )[-2:]
 
-        # Dismiss contours with out-of-bounds area.
-        self.contours = [ c for c in self.contours if 
-                          self.min_area<=cv2.contourArea(c)<=self.max_area ]
+#        # Dismiss contours with out-of-bounds area.
+#        self.contours = [ c for c in self.contours if 
+#                          self.min_area<=cv2.contourArea(c)<=self.max_area ]
         
         # Compute contour moments.
         self.moments  = [ cv2.moments(c) for c in self.contours ]
+        
+        for M in self.moments:
+            mu = np.array([[M['mu20'],M['mu11']],[M['mu11'],M['mu02']]])/M['m00']
+            eVal,eVec = la.eigh(mu)
+            M['aspect'] = eVal[0]/eVal[1]
+            
+        # Dismiss contours with out-of-bounds area or aspect ratio.
+        self.contours, self.moments = zip(* 
+                          [ (c,M) for c,M in zip(self.contours,self.moments) if 
+                          self.min_area<=M['m00']<=self.max_area 
+                          and M['aspect']<=self.max_aspect ]
+                          )
         
         # Compute tentative new coordinates.
         # If there aren't enough contours, fill with NaN.
@@ -319,20 +334,38 @@ class Tracker:
         for i,M in enumerate(self.moments):
             x     = M['m10'] / M['m00']
             y     = M['m01'] / M['m00']
-            theta = 0.5 * np.arctan2(2*M['mu11'], M['mu20']-M['mu02'])
             area  = M['m00']
+            theta = 0.5 * np.arctan2(2*M['mu11'], M['mu20']-M['mu02'])
             
-#            # This is a bit more costly but provides the semi-axes as well.
+            # This is a bit more costly but provides the semi-axes as well.
 #            mu = np.array([[M['mu20'],M['mu11']],[M['mu11'],M['mu02']]])/M['m00']
 #            eVal,eVec = la.eigh(mu)
 #            theta = np.arctan2(eVec[1,1],eVec[1,0])
             
             self.new[i] = [x, y, theta, area]
-        
+
 
     #############################
     # Frame-to-frame functions
     #############################
+
+
+    def predict_next(self):
+        # Grab last coordinates.
+        last = self.df.values[-1].reshape((self.n_ind,4))
+        if len(self.df)==1:
+            return last
+        # If available, use before-last coordinates to refine guess.
+        penul = self.df.values[-2].reshape((self.n_ind,4))
+        penul[:,3] = last[:,3] # Don't feed area noise into the prediction.
+        pred  = 2*last - penul
+        # If last or penul is nan, use the other.
+        # TODO: If last and penul are both nan, look at older coordinates.
+        I     = np.isnan(penul)
+        pred[I] = last[I]
+        I     = np.isnan(last)
+        pred[I] = penul[I]
+        return pred
 
 
     # this is the main algorithm the tracer follows when trying 
@@ -344,8 +377,6 @@ class Tracker:
         # If there aren't enough contours, fill with NaN.
         if len(self.df) == 0:
             if len(self.new)>self.n_ind:
-                # If there are too many contours, reorder by "ideality" (for now 
-                # closeness to ideal area) then pick the first n_ind.
                 # TODO: Take another look at the cluster algorithm approach used 
                 # in cvtracer. What situation is it meant to address? Is that idea 
                 # that some fish may be broken into multiple contours?
@@ -354,11 +385,13 @@ class Tracker:
         else:
             # If there is a valid previous frame, first set missing positions aside,
             # then solve assignment problem on remaining positions.
-            # TODO: Bring back prediction of positions based on past positions.
-            old     = self.df.iloc[-1].values.reshape((self.n_ind,4))
-            xy_old  = old[:,:2]
-            xy_new  = self.new[:,:2]
-            d       = cdist(xy_old,xy_new)
+            old     = self.predict_next()
+            # coord contains the positions and area weighted with self.area_change_penalty.
+            coord_old  = old[:,[0,1,3]]
+            coord_new  = self.new[:,[0,1,3]]
+            coord_old *= self.area_penalty
+            coord_new *= self.area_penalty
+            d          = cdist(coord_old,coord_new)
             # Putting a high cost on connections involving a missing position (NaN)
             # effectively makes the algorithm match all valid contours first.
             # This likely causes problems when multiple fish are lost.
