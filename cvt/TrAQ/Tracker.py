@@ -8,6 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
+from scipy.stats import skew
 from cvt.TrAQ.Tank import Tank
 from cvt.utils import *
 
@@ -19,7 +20,8 @@ class Tracker:
                  n_pixel_blur = 3, block_size = 15, 
                  threshold_offset = 13, min_area = 20, max_area = 400, 
                  max_aspect = 10, area_penalty = 1, 
-                 max_frame2frame_distance = None, significant_displacement = None, 
+                 reversal_threshold = None, 
+                 significant_displacement = None, 
                  adaptiveMethod = 'gaussian', threshType = 'inv', 
                  bkgSub_options = dict( n_training_frames = 500, 
                                         t_start = 0, t_end = -1,
@@ -84,19 +86,14 @@ class Tracker:
         self.max_aspect     = max_aspect
         self.area_penalty   = area_penalty
         
-        self.max_frame2frame_distance = max_frame2frame_distance
-        if self.max_frame2frame_distance == None:
-            # Maximum distance a fish can reasonably travel over a single frame.
-            # sqrt(max_area) works as a rough estimate for the body length.
-            self.max_frame2frame_distance = np.sqrt(self.max_area)*2
-        
-        self.significant_displacement = significant_displacement
-        if significant_displacement == None:
-            self.significant_displacement = np.sqrt(self.max_area)*0.2
+        body_size_estimate  = np.sqrt(self.max_area)
+        self.reversal_threshold = reversal_threshold if reversal_threshold!=None \
+                                  else body_size_estimate*0.05
+        self.significant_displacement = significant_displacement if significant_displacement!=None \
+                                        else body_size_estimate*0.2
     
         # Tracking data structures.
         self.contours       = []
-        self.moments        = []
         # The tracked fish data is stored as a dataframe with multiindex columns:
         # level 1=fish id, level 2=quantity (x,y,angle,...).
         # x_px and y_px are the cv2 pixel coordinates
@@ -137,9 +134,7 @@ class Tracker:
         self.out.release()
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-        
-        sys.stdout.write("\n")
-        sys.stdout.write("       Video capture released.\n")
+        sys.stdout.write('\n       Video capture released.\n')
         sys.stdout.flush()
 
 
@@ -307,43 +302,41 @@ class Tracker:
                                                      cv2.RETR_TREE, 
                                                      cv2.CHAIN_APPROX_SIMPLE )[-2:]
 
-#        # Dismiss contours with out-of-bounds area.
-#        self.contours = [ c for c in self.contours if 
-#                          self.min_area<=cv2.contourArea(c)<=self.max_area ]
+        self.new = []
+        if self.tracked_frames()==1:
+            self.cimg = np.zeros(self.frame.shape[:2])
+        for i,c in enumerate(self.contours):
+            M = cv2.moments(c)
+            # If area is valid, proceed with contour analysis.
+            area = M['m00']
+            if self.min_area<=area<=self.max_area:
+                x     = M['m10'] / area
+                y     = M['m01'] / area
+                theta = 0.5 * np.arctan2(2*M['mu11'], M['mu20']-M['mu02'])
+                mu    = np.array([[M['mu20'],M['mu11']],[M['mu11'],M['mu02']]])/area
+                eVal,eVec = la.eigh(mu)
+#                theta = np.arctan2(eVec[1,1],eVec[1,0])
+                aspect = eVal[0]/eVal[1]
+                # At the beginning, use skewness to guess front/back.
+                if self.tracked_frames()==1:
+                    cv2.drawContours(self.cimg, [c], 0, color=i, thickness=-1)
+                    Y,X = np.nonzero(self.cimg==i)
+                    # TODO: Try using width of the fish in the front half vs rear half instead
+                    # of the skew along the long axis. Find out which one is more robust.
+                    U = (X-x)*np.cos(theta)+(Y-y)*np.sin(theta)
+                    if skew(U)>0:
+                        theta += np.pi
+                if aspect<=self.max_aspect:
+                    M['valid'] = True
+                    self.new.append([x,y,theta,area])
+                else:
+                    self.contour[i] = None
         
-        # Compute contour moments.
-        self.moments  = [ cv2.moments(c) for c in self.contours ]
-        
-        for M in self.moments:
-            mu = np.array([[M['mu20'],M['mu11']],[M['mu11'],M['mu02']]])/M['m00']
-            eVal,eVec = la.eigh(mu)
-            M['aspect'] = eVal[0]/eVal[1]
+        for i in range(len(self.new),self.n_ind):
+            self.new.append([np.nan]*4)
+        self.new = np.array(self.new)
+        self.contours = [ c for c in self.contours if type(c)!=type(None) ]
             
-        # Dismiss contours with out-of-bounds area or aspect ratio.
-        self.contours, self.moments = zip(* 
-                          [ (c,M) for c,M in zip(self.contours,self.moments) if 
-                          self.min_area<=M['m00']<=self.max_area 
-                          and M['aspect']<=self.max_aspect ]
-                          )
-        
-        # Compute tentative new coordinates.
-        # If there aren't enough contours, fill with NaN.
-        n = max(len(self.contours),self.n_ind)
-        self.new = np.empty((n,4),dtype=float)
-        self.new.fill(np.nan)
-        for i,M in enumerate(self.moments):
-            x     = M['m10'] / M['m00']
-            y     = M['m01'] / M['m00']
-            area  = M['m00']
-            theta = 0.5 * np.arctan2(2*M['mu11'], M['mu20']-M['mu02'])
-            
-            # This is a bit more costly but provides the semi-axes as well.
-#            mu = np.array([[M['mu20'],M['mu11']],[M['mu11'],M['mu02']]])/M['m00']
-#            eVal,eVec = la.eigh(mu)
-#            theta = np.arctan2(eVec[1,1],eVec[1,0])
-            
-            self.new[i] = [x, y, theta, area]
-
 
     #############################
     # Frame-to-frame functions
@@ -385,13 +378,13 @@ class Tracker:
         else:
             # If there is a valid previous frame, first set missing positions aside,
             # then solve assignment problem on remaining positions.
-            old     = self.predict_next()
+            predicted   = self.predict_next()
             # coord contains the positions and area weighted with self.area_change_penalty.
-            coord_old  = old[:,[0,1,3]]
-            coord_new  = self.new[:,[0,1,3]]
-            coord_old *= self.area_penalty
-            coord_new *= self.area_penalty
-            d          = cdist(coord_old,coord_new)
+            coord_pred  = predicted[:,[0,1,3]]
+            coord_new   = self.new[:,[0,1,3]]
+            coord_pred *= self.area_penalty
+            coord_new  *= self.area_penalty
+            d           = cdist(coord_pred,coord_new)
             # Putting a high cost on connections involving a missing position (NaN)
             # effectively makes the algorithm match all valid contours first.
             # This likely causes problems when multiple fish are lost.
@@ -406,22 +399,26 @@ class Tracker:
             # TODO: Identify cases in which a disappeared fish likely
             # merged contours with another fish (e.g. detect likely occlusions).
             # This will involve looking for area changes and making sure it doesn't
-            # involve a jump longer than max_frame2frame_distance.
+            # involve an overly large frame-to-frame displacement.
         
         
-            # Fix spurious orientation reversals:
-            # 1. Look for continuity with previous frame.
-            dtheta  = self.new[:,2]-old[:,2]
+            # Fix orientation:
+            past    = self.df.values[-5:].reshape((-1,self.n_ind,4))
+            # 1. Look for continuity with the predicted value.
+#            dtheta  = self.new[:,2]-predicted[:,2]
+            dtheta  = self.new[:,2]-past[-1,:,2]
             I       = ~np.isnan(dtheta)
             self.new[I,2] -= np.pi*np.rint(dtheta[I]/np.pi)
-            # 2. Align direction with motion unless it's too slow.
-            dxy     = self.new[:,:2]-old[:,:2]
-            dot     = dxy[:,0]*np.cos(self.new[:,2])+dxy[:,1]*np.sin(self.new[:,2])
-            I       = (dot<-self.significant_displacement)
-            self.new[I,2] += np.pi
-            # TODO: Measure the orientation directly from the contour, probably by 
-            # looking at the sign of the third moment along the unsigned orientation.
-        
+#            self.new[:,2] -= np.pi*np.rint(dtheta/np.pi)
+            # 2. Reverse direction if recent motion as been against it.
+            if len(past)>4:
+                history = np.concatenate([past,self.new[None,:,:]])
+                dxy     = history[1:,:,:2]-history[:-1,:,:2]
+                dot     = np.cos(history[:-1,:,2])*dxy[:,:,0] + np.sin(history[:-1,:,2])*dxy[:,:,1]
+                dot[np.isnan(dot)] = 0
+                reverse = np.max(dot,axis=0)<-self.reversal_threshold
+                past[:,reverse,2]   += np.pi # Go back in history to fix orientation.
+                self.new[reverse,2] += np.pi        
         
         self.df.loc[self.frame_num] = self.new.flatten()
     
@@ -435,13 +432,19 @@ class Tracker:
         x = int(self.tank.x_px)
         y = int(self.tank.y_px)
         R = int(self.tank.r_px) + 1
-        if self.GPU:
-            tank_mask = cv2.UMat(np.zeros_like(self.frame))
+        
+        if self.threshType==cv2.THRESH_BINARY_INV:
+            tank_mask = 255*np.ones_like(self.frame)
+            if self.GPU:
+                tank_mask = cv2.UMat(tank_mask)
+            cv2.circle(tank_mask, (x,y), R, (0,0,0), thickness=-1)
+            self.frame = cv2.bitwise_or(self.frame, tank_mask)
         else:
             tank_mask = np.zeros_like(self.frame)
-        
-        cv2.circle(tank_mask, (x,y), R, (255,255,255), thickness=-1)
-        self.frame = cv2.bitwise_and(self.frame, tank_mask)
+            if self.GPU:
+                tank_mask = cv2.UMat(tank_mask)
+            cv2.circle(tank_mask, (x,y), R, (255,255,255), thickness=-1)
+            self.frame = cv2.bitwise_and(self.frame, tank_mask)
 
 
     def mask_contours(self):
@@ -496,7 +499,7 @@ class Tracker:
     def draw_tank(self, tank):
         color = (0,0,0) if self.RGB else 0
         cv2.circle(self.frame, (int(tank.x_px), int(tank.y_px)), int(tank.r_px),
-                   color, thickness=4)
+                   color, thickness=1)
 
     
     # Draw every contour.
@@ -552,7 +555,7 @@ class Tracker:
         keys = [ 't_start', 't_end', 'n_frames', 'frame_start', 'frame_end', 'frame_num', 
                  'bkgSub_options', 'n_pix_avg', 'block_size', 
                  'offset', 'threshMax', 'adaptiveMethod', 'threshType', 
-                 'min_area', 'max_area', 'ideal_area', 'max_frame2frame_distance', 
+                 'min_area', 'max_area', 'ideal_area', 'reversal_threshold', 
                  'significant_displacement' ]
         txt = '\n'.join(f'{k} = {self.__dict__[k]}' for k in keys)
         if fname == None:
