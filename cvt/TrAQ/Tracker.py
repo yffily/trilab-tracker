@@ -98,9 +98,16 @@ class Tracker:
         # level 1=fish id, level 2=quantity (x,y,angle,...).
         # x_px and y_px are the cv2 pixel coordinates
         # (x_px=horizontal, y_px=vertical upside down).
-        columns = pd.MultiIndex.from_product([ range(self.n_ind),
-                                               ['x_px','y_px','ang','area'] ])
-        self.df = pd.DataFrame(columns=columns, index=pd.Index([],name='frame'))
+#        columns = pd.MultiIndex.from_product([ range(self.n_ind),
+#                                               ['x_px','y_px','ang','area'] ])
+#        self.df = pd.DataFrame(columns=columns, index=pd.Index([], name='frame'))
+        
+        # Change of plan: the output of the tracking is stored in a numpy array.
+        # Axes: 0=frame, 1=fish, 2=quantity.
+        # Quantities: x_px, y_px, angle, area.
+        self.data = np.empty((0,self.n_ind,4), dtype=np.float)
+        self.frame_list = np.array([],dtype=np.int)
+
 
 
     ############################
@@ -316,7 +323,7 @@ class Tracker:
                 mu    = np.array([[M['mu20'],M['mu11']],[M['mu11'],M['mu02']]])/area
                 eVal,eVec = la.eigh(mu)
 #                theta = np.arctan2(eVec[1,1],eVec[1,0])
-                aspect = eVal[0]/eVal[1]
+                aspect = np.sqrt(eVal[1]/eVal[0])
                 # At the beginning, use skewness to guess front/back.
                 if self.tracked_frames()==1:
                     cv2.drawContours(self.cimg, [c], 0, color=i, thickness=-1)
@@ -329,14 +336,14 @@ class Tracker:
                 if aspect<=self.max_aspect:
                     M['valid'] = True
                     self.new.append([x,y,theta,area])
-                else:
-                    self.contour[i] = None
+                    continue
+            self.contours[i] = None
         
         for i in range(len(self.new),self.n_ind):
             self.new.append([np.nan]*4)
-        self.new = np.array(self.new)
+        self.new = np.array(self.new,dtype=np.float)
         self.contours = [ c for c in self.contours if type(c)!=type(None) ]
-            
+        
 
     #############################
     # Frame-to-frame functions
@@ -345,11 +352,11 @@ class Tracker:
 
     def predict_next(self):
         # Grab last coordinates.
-        last = self.df.values[-1].reshape((self.n_ind,4))
-        if len(self.df)==1:
+        last = self.data[-1].copy()
+        if len(self.data)==1:
             return last
         # If available, use before-last coordinates to refine guess.
-        penul = self.df.values[-2].reshape((self.n_ind,4))
+        penul = self.data[-2].copy()
         penul[:,3] = last[:,3] # Don't feed area noise into the prediction.
         pred  = 2*last - penul
         # If last or penul is nan, use the other.
@@ -368,7 +375,7 @@ class Tracker:
         
         # If there is no previous frame, use the n_ind best contours.
         # If there aren't enough contours, fill with NaN.
-        if len(self.df) == 0:
+        if len(self.data) == 0:
             if len(self.new)>self.n_ind:
                 # TODO: Take another look at the cluster algorithm approach used 
                 # in cvtracer. What situation is it meant to address? Is that idea 
@@ -403,10 +410,14 @@ class Tracker:
         
         
             # Fix orientation:
-            past    = self.df.values[-5:].reshape((-1,self.n_ind,4))
+            past    = self.data[-5:]
             # 1. Look for continuity with the predicted value.
 #            dtheta  = self.new[:,2]-predicted[:,2]
             dtheta  = self.new[:,2]-past[-1,:,2]
+#            print(self.new[:,2].dtype,past[-1,:,2].dtype)
+#            print(self.df,self.df.dtypes)
+#            print(dtheta.dtype)
+#            print(np.isnan(dtheta))
             I       = ~np.isnan(dtheta)
             self.new[I,2] -= np.pi*np.rint(dtheta[I]/np.pi)
 #            self.new[:,2] -= np.pi*np.rint(dtheta/np.pi)
@@ -420,7 +431,8 @@ class Tracker:
                 past[:,reverse,2]   += np.pi # Go back in history to fix orientation.
                 self.new[reverse,2] += np.pi        
         
-        self.df.loc[self.frame_num] = self.new.flatten()
+        self.data = np.append(self.data, [self.new], axis=0)
+        self.frame_list = np.append(self.frame_list,self.frame_num)
     
         
     ############################
@@ -566,7 +578,7 @@ class Tracker:
         
 
     def save_trial(self, fname = None):
-        keys = [ 'input_video', 'output_dir', 'n_ind', 'fps', 'tank', 'df' ]
+        keys = [ 'input_video', 'output_dir', 'n_ind', 'fps', 'tank', 'data', 'frame_list' ]
         if fname == None:
             fname = self.trial_file
         with open(fname,'wb') as f:

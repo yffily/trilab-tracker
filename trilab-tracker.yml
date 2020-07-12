@@ -18,4 +18,4 @@ dependencies:
     - sklearn
     - argparse
     - screeninfo # get screen resolution
-
+    - PythonVideoConverter # ffmpeg based video conversion
