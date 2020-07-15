@@ -11,17 +11,17 @@ from scipy.spatial.distance import cdist
 from scipy.stats import skew
 from cvt.TrAQ.Tank import Tank
 from cvt.utils import *
+import datetime
 
 
 class Tracker:
     
     def __init__(self, input_video, output_dir, n_ind, 
                  t_start = 0, t_end = -1,  
-                 n_pixel_blur = 3, block_size = 15, 
-                 threshold_offset = 13, min_area = 20, max_area = 400, 
-                 max_aspect = 10, area_penalty = 1, 
-                 reversal_threshold = None, 
-                 significant_displacement = None, 
+                 n_pixel_blur = 3, block_size = 15, threshold_offset = 13, 
+                 min_area = 20, max_area = 400, ideal_area = None, 
+                 max_aspect = 10, ideal_aspect = None, area_penalty = 1, 
+                 reversal_threshold = None, significant_displacement = None, 
                  adaptiveMethod = 'gaussian', threshType = 'inv', 
                  bkgSub_options = dict( n_training_frames = 500, 
                                         t_start = 0, t_end = -1,
@@ -82,8 +82,9 @@ class Tracker:
                               else cv2.THRESH_BINARY
         self.min_area       = max(min_area,1)
         self.max_area       = max_area
-        self.ideal_area     = (min_area+max_area)/2
+        self.ideal_area     = ideal_area if ideal_area!=None else (min_area+max_area)/2
         self.max_aspect     = max_aspect
+        self.ideal_aspect   = ideal_aspect if ideal_aspect!=None else max_aspect/2
         self.area_penalty   = area_penalty
         
         body_size_estimate  = np.sqrt(self.max_area)
@@ -107,6 +108,7 @@ class Tracker:
         # Quantities: x_px, y_px, angle, area.
         self.data = np.empty((0,self.n_ind,4), dtype=np.float)
         self.frame_list = np.array([],dtype=np.int)
+        self.last_known = np.zeros((self.n_ind,4), dtype=int)
 
 
 
@@ -139,9 +141,10 @@ class Tracker:
         # release the capture
         self.cap.release()
         self.out.release()
+#        self.cap,self.out = None, None # This should help make the Tracker object picklable.
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-        sys.stdout.write('\n       Video capture released.\n')
+        sys.stdout.write(f'\n{parindent}Video capture released.\n')
         sys.stdout.flush()
 
 
@@ -240,7 +243,7 @@ class Tracker:
     def post_frame(self,delay=None):
         if delay==None or delay<1:
             delay = int(1000/self.fps)
-        if ( self.live_preview ):
+        if self.live_preview:
             wname = self.preview_window
             cv2.imshow(wname,self.frame)
             k = wait_on_named_window(wname,delay)
@@ -257,12 +260,11 @@ class Tracker:
  
 
     def print_current_frame(self):
-        t_csc = int(self.frame_num/self.fps * 100)
-        t_sec = int(t_csc/100) 
-        t_min = t_sec/60
-        t_hor = t_min/60
-        sys.stdout.write("       Current tracking time: %02i:%02i:%02i:%02i \r" 
-                         % (t_hor, t_min % 60, t_sec % 60, t_csc % 100) )
+        s = self.frame_num/self.fps
+        m,s = divmod(s,60)
+        h,m = divmod(m,60)
+        fmt = f'{h:02.0f}:{m:02.0f}:{s:05.2f}'
+        sys.stdout.write(parindent+f'Current tracking time: {fmt}\r')
         sys.stdout.flush()
         
 
@@ -338,7 +340,6 @@ class Tracker:
                     self.new.append([x,y,theta,area])
                     continue
             self.contours[i] = None
-        
         for i in range(len(self.new),self.n_ind):
             self.new.append([np.nan]*4)
         self.new = np.array(self.new,dtype=np.float)
@@ -349,78 +350,93 @@ class Tracker:
     # Frame-to-frame functions
     #############################
 
-
+    
+    # Predict fish coordinates in current frame based on past frames.
     def predict_next(self):
         # Grab last coordinates.
         last = self.data[-1].copy()
         if len(self.data)==1:
             return last
         # If available, use before-last coordinates to refine guess.
-        penul = self.data[-2].copy()
+        penul      = self.data[-2].copy()
         penul[:,3] = last[:,3] # Don't feed area noise into the prediction.
-        pred  = 2*last - penul
+        pred       = 2*last - penul
         # If last or penul is nan, use the other.
         # TODO: If last and penul are both nan, look at older coordinates.
-        I     = np.isnan(penul)
-        pred[I] = last[I]
-        I     = np.isnan(last)
-        pred[I] = penul[I]
+        I          = np.isnan(penul)
+        pred[I]    = last[I]
+        I          = np.isnan(last)
+        pred[I]    = penul[I]
+        # For the angle, use the last known value no matter how old.
+        I          = np.isnan(pred[:,2])
+        pred[I,2]  = self.data[self.last_known[I,2],I,2]
         return pred
 
-
-    # this is the main algorithm the tracer follows when trying 
-    # to associate individuals identified in this frame with 
-    # those identified in the previous frame/s
+    
+    # Use information from past frames to identify the contour corresponding
+    # to each fish in the current frame.
     def connect_frames(self):
         
         # If there is no previous frame, use the n_ind best contours.
         # If there aren't enough contours, fill with NaN.
         if len(self.data) == 0:
             if len(self.new)>self.n_ind:
+                # Use the distance to the ideal area and aspect ratio to measure
+                # contour quality. I don't save the moment-obtained aspect ratio 
+                # so using ellipse fitting to save time/space. Also giving a little 
+                # more weight to the area distance than the aspect one.
+                d1 = np.absolute(self.new[:,3]/self.ideal_area-1)
+                ellipses = [ cv2.fitEllipse(c) for c in self.contours ]
+                aspects  = np.array([ e[1][1]/e[1][0] for e in ellipses ])
+                d2 = np.absolute(aspects/self.ideal_aspect-1)
+                d  = d1+d2
                 # TODO: Take another look at the cluster algorithm approach used 
                 # in cvtracer. What situation is it meant to address? Is that idea 
                 # that some fish may be broken into multiple contours?
-                d = np.absolute(self.new[:,3]-self.ideal_area) # distance ideal contour area
                 self.new = self.new[np.argsort(d)][:self.n_ind]
         else:
-            # If there is a valid previous frame, first set missing positions aside,
-            # then solve assignment problem on remaining positions.
-            predicted   = self.predict_next()
-            # coord contains the positions and area weighted with self.area_change_penalty.
-            coord_pred  = predicted[:,[0,1,3]]
-            coord_new   = self.new[:,[0,1,3]]
-            coord_pred *= self.area_penalty
-            coord_new  *= self.area_penalty
-            d           = cdist(coord_pred,coord_new)
-            # Putting a high cost on connections involving a missing position (NaN)
-            # effectively makes the algorithm match all valid contours first.
-            # This likely causes problems when multiple fish are lost.
-            # Using the last known position would probably be better.
-            d[np.isnan(d)] = 1e8
+            # If there is a valid previous frame, compute the generalized distance between
+            # every object in the frame and every object in the previous frame, then solve
+            # the assignment problem with scipy.
+            predicted        = self.predict_next()
+            # Include contour areas in the generalized distance to penalize excessive 
+            # changes of area between two frames.
+            coord_pred       = predicted[:,[0,1,3]]
+            coord_new        = self.new[:,[0,1,3]]
+            coord_pred[:,2] *= self.area_penalty
+            coord_new[:,2]  *= self.area_penalty
+            d                = cdist(coord_pred,coord_new)
+            # Use a two-tiered penalty system for missing fish.
+            # If a fish has no predicted coordinates (NaN), use its last known position
+            # but increase the distance a by a factor 1e4 so recently seen fish get
+            # matched first.
+            # If a fish has no last known position set the distance to 1e8 so those get
+            # matched last.
+            I                = np.nonzero(np.isnan(coord_pred))[0]
+            coord_pred[I]    = self.last_known[I][:,[0,1,3]]
+            coord_pred[I,2] *= self.area_penalty
+            d[I]             = 1e4*cdist(coord_pred[I],coord_new)
+            d[np.isnan(d)]   = 1e8
             Io,In = linear_sum_assignment(d)
             self.new = self.new[In]
             
-            # TODO: When a fish is missing look for its last known position. 
-            # Even better: use last few known positions to predict current position.
+            # TODO: When a fish is missing use its last known position or some prediction 
+            # based on it. Caveat: if the last known position is old, try to match recently
+            # valid objects first.
             
             # TODO: Identify cases in which a disappeared fish likely
             # merged contours with another fish (e.g. detect likely occlusions).
             # This will involve looking for area changes and making sure it doesn't
             # involve an overly large frame-to-frame displacement.
         
-        
-            # Fix orientation:
+            # Fix orientations.
             past    = self.data[-5:]
-            # 1. Look for continuity with the predicted value.
-#            dtheta  = self.new[:,2]-predicted[:,2]
-            dtheta  = self.new[:,2]-past[-1,:,2]
-#            print(self.new[:,2].dtype,past[-1,:,2].dtype)
-#            print(self.df,self.df.dtypes)
-#            print(dtheta.dtype)
-#            print(np.isnan(dtheta))
-            I       = ~np.isnan(dtheta)
-            self.new[I,2] -= np.pi*np.rint(dtheta[I]/np.pi)
-#            self.new[:,2] -= np.pi*np.rint(dtheta/np.pi)
+            # 1. Look for continuity with the predicted value. Use last known value rather than
+            # predicted value to avoid reversal instability following a very quick turn (as 
+            # happens e.g. when contours merge).
+            dtheta  = self.new[:,2]-self.last_known[:,2]
+            dtheta[np.isnan(dtheta)] = 0 # Avoid nan propagating from predicted to new.
+            self.new[:,2] -= np.pi*np.rint(dtheta/np.pi)
             # 2. Reverse direction if recent motion as been against it.
             if len(past)>4:
                 history = np.concatenate([past,self.new[None,:,:]])
@@ -433,6 +449,8 @@ class Tracker:
         
         self.data = np.append(self.data, [self.new], axis=0)
         self.frame_list = np.append(self.frame_list,self.frame_num)
+        I = ~np.isnan(self.new)
+        self.last_known[I] = self.new[I]
     
         
     ############################
@@ -443,8 +461,7 @@ class Tracker:
     def mask_tank(self):
         x = int(self.tank.x_px)
         y = int(self.tank.y_px)
-        R = int(self.tank.r_px) + 1
-        
+        R = int(self.tank.r_px) + 1 # ??
         if self.threshType==cv2.THRESH_BINARY_INV:
             tank_mask = 255*np.ones_like(self.frame)
             if self.GPU:
@@ -459,13 +476,13 @@ class Tracker:
             self.frame = cv2.bitwise_and(self.frame, tank_mask)
 
 
-    def mask_contours(self):
-        self.contour_masks = []
-        # add contour areas to mask
-        for i in range(len(self.contours)):
-            mask = np.zeros_like(self.frame, dtype=bool)
-            cv2.drawContours(mask, self.contours, i, 1, -1)
-            self.contour_masks.append(mask)
+#    def mask_contours(self):
+#        self.contour_masks = []
+#        # add contour areas to mask
+#        for i in range(len(self.contours)):
+#            mask = np.zeros_like(self.frame, dtype=bool)
+#            cv2.drawContours(mask, self.contours, i, 1, -1)
+#            self.contour_masks.append(mask)
 
 
     ############################
@@ -548,21 +565,6 @@ class Tracker:
     ############################
 
 
-#    def save(self, fname = None, trial=True, tracking=True, misc=False):
-#        if fname == None:
-#            fname = self.trial_file
-##        try:
-#        self.release()
-#        self.cap = None
-#        self.out = None
-#        with open(fname,'wb') as f:
-#            pickle.dump(self.__dict__, f, protocol = 3)
-#        sys.stdout.write(f'       Tracker object saved as {fname}\n')
-#        sys.stdout.flush()
-#        return True
-##        except:
-##            return False
-
     def save_settings(self, fname = None):
         keys = [ 't_start', 't_end', 'n_frames', 'frame_start', 'frame_end', 'frame_num', 
                  'bkgSub_options', 'n_pix_avg', 'block_size', 
@@ -575,7 +577,6 @@ class Tracker:
         with open(fname,'w') as f:
             f.write(txt)
             
-        
 
     def save_trial(self, fname = None):
         keys = [ 'input_video', 'output_dir', 'n_ind', 'fps', 'tank', 'data', 'frame_list' ]
@@ -587,28 +588,3 @@ class Tracker:
 
 # Remaining variables (not in settings or trial):
 # keys = [ 'trial_file', 'colors', 'GPU', 'cap', 'width', 'height', 'RGB', 'live_preview', 'preview_window', 'codec', 'output_video', 'out', 'tank_file', 'background', 'bkg_file', 'bkg_img_file', 'thresh', 'contours', 'moments', 'frame', 'new' ]
-
-
-#    def load(self, fname = None):
-#        if fname == None:
-#            fname = self.trial_file
-##        try:
-#        f = open(fname, 'rb')
-#        tmp_dict = pickle.load(f)
-#        f.close()
-#        self.__dict__.update(tmp_dict)
-#        
-#        # This should help use trial files created on a different machine.
-#        self.output_dir = os.path.split(fname)[0]
-#        for v in 'trial_file','tank_file','traced_file':
-#            p = os.path.basename(self.__dict__[v])
-#            self.__dict__[v] = os.path.join(self.output_dir,p)
-#        
-#        sys.stdout.write("\n        Trial loaded from %s \n" % fname)
-#        sys.stdout.flush()
-#        return True
-##        except:
-##            sys.stdout.write("\n        Unable to load Trial from %s \n" % fname)
-##            sys.stdout.flush()
-##            return False
-
