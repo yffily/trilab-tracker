@@ -198,10 +198,8 @@ class Tracker:
 
 
     def compute_background(self):
-        
-        sys.stdout.write("       Computing background...") 
-        sys.stdout.flush()
-        
+#        sys.stdout.write("       Computing background...") 
+#        sys.stdout.flush()
         t_start    = self.bkgSub_options['t_start']
         t_end      = self.bkgSub_options['t_end']
         n_training = self.bkgSub_options['n_training_frames']
@@ -209,7 +207,6 @@ class Tracker:
         i_end      = int(t_end*self.fps) if t_end>0 else self.n_frames-1
         i_end      = min( self.n_frames-1, i_end )
         training_frames = np.linspace(i_start, i_end, n_training, dtype=int)
-        
         self.get_next_frame()
         self.background = np.zeros(self.frame.shape)
         count = 0

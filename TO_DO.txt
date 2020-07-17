@@ -1,6 +1,4 @@
 
-- Previously time derivatives were computed with a 2nd order centered difference scheme. Now I'm just using pandas' diff. It may be useful to allow specifying a derivation kernel, maybe using numpy.convolve.
-
 - Right now pretty much everything is in verbose mode. Create a silent mode, or possibly versbosity levels.
 
 - Fix aspect ratio of cv2 windows in Windows10.
