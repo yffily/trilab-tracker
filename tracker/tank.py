@@ -1,11 +1,11 @@
 import sys
 import os
-import pickle
+import logging
 import numpy as np
 import cv2
-from cvt.utils import *
+from tracker.utils import *
 
-point_radius = 5
+point_radius = 8
 
 class Tank:
 
@@ -13,8 +13,6 @@ class Tank:
         self.x_px    = 0
         self.y_px    = 0
         self.r_px    = 0
-#        self.points  = np.zeros((3,2))    
-#        self.n_point = 0
         self.points  = []
         self.found   = False
         self.raw_frame = None
@@ -39,6 +37,7 @@ class Tank:
     def load(self, fname):
         try:
             self.__dict__.update(load_pik(fname))
+            logging.info(parindent+f'Tank loaded from {fname}')
             return True
         except:
             return False
@@ -77,7 +76,7 @@ class Tank:
             self.interrupt(f'Could not open frame {i_frame}.')
         
         # Wait for user to click on the edge three times.
-        self.wname = create_named_window('Locate the tank (click on three distinct points on the boundary)')
+        self.wname = create_named_window(f'[{fvideo}] Click three points on the boundary. Drag as needed. Press space to accept, esc to cancel.')
         self.point_dragged = None
         cv2.setMouseCallback(self.wname, self.add_point)
         cv2.imshow(self.wname,self.frame)
@@ -142,8 +141,7 @@ class Tank:
         cv2.destroyAllWindows()
         self.release_capture()
         if msg!=None:
-            sys.stdout.write(parindent+f'{msg}\n')
-            sys.stdout.flush()
+            logging.info(parindent+f'{msg}')
         return retval
 
 

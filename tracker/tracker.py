@@ -1,6 +1,6 @@
 import sys
 import os
-import pickle
+import logging
 import cv2
 import numpy as np
 import numpy.linalg as la
@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 from scipy.stats import skew
-from cvt.TrAQ.Tank import Tank
-from cvt.utils import *
+from tracker.tank import Tank
+from tracker.utils import *
 import datetime
 
 
@@ -26,7 +26,7 @@ class Tracker:
                  bkgSub_options = dict( n_training_frames = 500, 
                                         t_start = 0, t_end = -1,
                                         contrast_factor = 4 ), 
-                 RGB = True, live_preview = False, GPU = False ):
+                 RGB = True, live_preview = False, GPU = False, **args ):
 
         self.input_video    = input_video
         self.output_dir     = output_dir
@@ -38,37 +38,20 @@ class Tracker:
         self.GPU            = GPU
 
         # Video input.
-        self.init_video_input()
         self.t_start        = t_start
         self.t_end          = t_end
-        self.frame_start    = max(0, int(t_start*self.fps))
-        self.frame_end      = int(t_end*self.fps) if t_end>0 else self.n_frames-1
-        self.frame_end      = min(self.frame_end-1, self.frame_end)
-        self.set_frame(self.frame_start-1)
         
         # Video output.
         self.RGB            = RGB
         self.live_preview   = live_preview
         self.preview_window = 'live tracking preview'
-        ext                 = 'mp4' # 'avi'
-        self.codec          = {'mp4':'mp4v','avi':'DIVX'}[ext]
+#        ext,self.codec      = 'avi','DIVX'
+        ext,self.codec      = 'mp4','mp4v'
         self.output_video   = os.path.join(output_dir,'tracked.'+ext)
-        self.init_video_output()
         
-        # Tank.
-        self.tank_file      = os.path.join(output_dir,'tank.pik')
-        self.tank           = Tank()
-        self.tank.load_or_locate_and_save(self.tank_file,self.input_video)
-
         # Background subtraction.
         self.background     = None
         self.bkgSub_options = bkgSub_options
-        self.bkg_file       = os.path.join(output_dir,'background.npz')
-        self.bkg_img_file   = os.path.join(output_dir,'background.png')
-        if not self.load_background(self.bkg_file):
-            self.compute_background()
-            self.save_background(self.bkg_file)
-        cv2.imwrite(self.bkg_img_file,self.background)
 
         # Tracking parameters.
         self.n_pix_avg      = n_pixel_blur
@@ -93,39 +76,57 @@ class Tracker:
         self.significant_displacement = significant_displacement if significant_displacement!=None \
                                         else body_size_estimate*0.2
     
-        # Tracking data structures.
+
+    ############################
+    # cv2.VideoCapture functions
+    ############################
+    
+    def init_directory(self):
+        if not os.path.exists(self.output_dir):
+            os.mkdir(self.output_dir)
+
+
+    def init_tank(self):
+        self.tank_file = os.path.join(self.output_dir,'tank.pik')
+        self.tank = Tank()
+        self.tank.load_or_locate_and_save(self.tank_file,self.input_video)
+
+
+    def init_background(self):
+        self.bkg_file       = os.path.join(self.output_dir,'background.npz')
+        self.bkg_img_file   = os.path.join(self.output_dir,'background.png')
+        if not self.load_background(self.bkg_file):
+            self.compute_background()
+            self.save_background(self.bkg_file)
+        cv2.imwrite(self.bkg_img_file,self.background)
+
+
+    def init_tracking_data_structure(self):
         self.contours       = []
-        # The tracked fish data is stored as a dataframe with multiindex columns:
-        # level 1=fish id, level 2=quantity (x,y,angle,...).
-        # x_px and y_px are the cv2 pixel coordinates
-        # (x_px=horizontal, y_px=vertical upside down).
-#        columns = pd.MultiIndex.from_product([ range(self.n_ind),
-#                                               ['x_px','y_px','ang','area'] ])
-#        self.df = pd.DataFrame(columns=columns, index=pd.Index([], name='frame'))
-        
-        # Change of plan: the output of the tracking is stored in a numpy array.
+        # The output of the tracking is stored in a numpy array.
         # Axes: 0=frame, 1=fish, 2=quantity.
         # Quantities: x_px, y_px, angle, area.
+        # x_px and y_px are the cv2 pixel coordinates
+        # (x_px=horizontal, y_px=vertical upside down).
         self.data = np.empty((0,self.n_ind,4), dtype=np.float)
         self.frame_list = np.array([],dtype=np.int)
         self.last_known = np.zeros((self.n_ind,4), dtype=int)
 
 
-
-    ############################
-    # cv2.VideoCapture functions
-    ############################
-
-
     def init_video_input(self):
         self.cap = cv2.VideoCapture(self.input_video)
         if self.cap.isOpened() == False:
-            sys.exit(f'Cannot read video file {self.input_video}\n')
+            sys.exit(f'Cannot read video file {self.input_video}')
         self.n_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps      = int(self.cap.get(cv2.CAP_PROP_FPS))
 #        self.fourcc   = int(cap.get(cv2.CAP_PROP_FOURCC))
         self.width    = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height   = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        self.frame_start    = max(0, int(self.t_start*self.fps))
+        self.frame_end      = int(self.t_end*self.fps) if self.t_end>0 else self.n_frames-1
+        self.frame_end      = min(self.frame_end-1, self.frame_end)
+        self.set_frame(self.frame_start-1)
         
         
     def init_video_output(self):
@@ -135,17 +136,24 @@ class Tracker:
         self.out = cv2.VideoWriter( filename = self.output_video, 
                                     frameSize = (self.width,self.height), 
                                     fourcc = fourcc, fps = self.fps, isColor = self.RGB )
-        
+
+
+    def init_all(self):
+        self.init_directory()
+        self.init_tank()
+        self.init_video_input()
+        self.init_video_output()
+        self.init_background()
+        self.init_tracking_data_structure()
+
 
     def release(self):
-        # release the capture
         self.cap.release()
         self.out.release()
 #        self.cap,self.out = None, None # This should help make the Tracker object picklable.
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-        sys.stdout.write(f'\n{parindent}Video capture released.\n')
-        sys.stdout.flush()
+        logging.info(f'{parindent}Video capture released')
 
 
     def tracked_frames(self):
@@ -198,8 +206,7 @@ class Tracker:
 
 
     def compute_background(self):
-#        sys.stdout.write("       Computing background...") 
-#        sys.stdout.flush()
+        logging.info(parindent+'Computing background') 
         t_start    = self.bkgSub_options['t_start']
         t_end      = self.bkgSub_options['t_end']
         n_training = self.bkgSub_options['n_training_frames']
@@ -254,15 +261,17 @@ class Tracker:
                     if k2==space_key:
                         break
         return 1
- 
 
-    def print_current_frame(self):
+
+    def get_current_timestamp(self):
         s = self.frame_num/self.fps
         m,s = divmod(s,60)
         h,m = divmod(m,60)
-        fmt = f'{h:02.0f}:{m:02.0f}:{s:05.2f}'
-        sys.stdout.write(parindent+f'Current tracking time: {fmt}\r')
-        sys.stdout.flush()
+        return f'{h:02.0f}:{m:02.0f}:{s:05.2f}'
+
+
+    def get_percent_complete(self):
+        return 100*(self.frame_num-self.frame_start)/(self.frame_end-self.frame_start)
         
 
     ############################
@@ -510,15 +519,11 @@ class Tracker:
         if timestamp:
             self.draw_tstamp()
 
-
+    
     def draw_tstamp(self):
         color = (0,0,0) if self.RGB else 0
-        font = cv2.FONT_HERSHEY_SCRIPT_SIMPLEX
-        t_str = "%02i:%02i:%02i.%02i" % ( 
-                int(self.frame_num / self.fps / 3600),
-                int(self.frame_num / self.fps / 60 % 60),
-                int(self.frame_num / self.fps % 60),
-                int(self.frame_num % self.fps * 100 / self.fps) )
+        font  = cv2.FONT_HERSHEY_SCRIPT_SIMPLEX
+        t_str = self.get_current_timestamp()
         cv2.putText(self.frame, t_str, (5,30), font, 1, color, 2)
 
     
@@ -560,7 +565,13 @@ class Tracker:
     ############################
     # Save/Load
     ############################
-
+    
+    def init_output_dir(self, output_dir=None):
+        if output_dir==None:
+            output_dir = self.output_dir
+        if not os.path.exists(output_dir):
+            os.mkdir(output_dir)        
+    
 
     def save_settings(self, fname = None):
         keys = [ 't_start', 't_end', 'n_frames', 'frame_start', 'frame_end', 'frame_num', 
@@ -568,19 +579,16 @@ class Tracker:
                  'offset', 'threshMax', 'adaptiveMethod', 'threshType', 
                  'min_area', 'max_area', 'ideal_area', 'reversal_threshold', 
                  'significant_displacement' ]
-        txt = '\n'.join(f'{k} = {self.__dict__[k]}' for k in keys)
         if fname == None:
             fname = self.settings_file
-        with open(fname,'w') as f:
-            f.write(txt)
+        save_txt( fname, { k:self.__dict__[k] for k in keys if k in self.__dict__.keys() } )
             
 
     def save_trial(self, fname = None):
         keys = [ 'input_video', 'output_dir', 'n_ind', 'fps', 'tank', 'data', 'frame_list' ]
         if fname == None:
             fname = self.trial_file
-        with open(fname,'wb') as f:
-            pickle.dump({k:self.__dict__[k] for k in keys}, f, protocol = 3)
+        save_pik( fname, { k:self.__dict__[k] for k in keys } )
 
 
 # Remaining variables (not in settings or trial):

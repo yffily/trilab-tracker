@@ -1,11 +1,63 @@
 import os
 import sys
+import logging
 import pickle
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import screeninfo
 
+
+#========================================================
+# Logging.
+
+parindent = '' # ' '*5
+
+#DEFAULT_LOGGING_CONFIG = {
+#    'version': 1,
+#    'disable_existing_loggers': True,
+#    'loggers': { 
+#         '': { 'level': 'INFO', 'handlers': ['stdout'] } 
+#         },
+#    'handlers': {
+#        'stdout': { 'level': 'INFO', 
+#                    'class': 'logging.StreamHandler', 
+#                    'stream':'ext://sys.stdout' }
+#        }
+#}
+
+
+#def add_log_file(filename,level=logging.INFO):
+#    config = DEFAULT_LOGGING.copy()
+#    config['loggers']['']['handlers'] = ['stdout','file']
+#    config['handlers']['file'] = {
+#            'level': 'INFO',
+#            'formatter': 'standard',
+#            'class': 'logging.FileHandler',
+#            'filename': filename,
+#            'mode': 'w'
+#            }
+#    logging.dictConfig(config)
+
+
+def add_log_file(filename,level=logging.INFO):
+    handler = logging.FileHandler(filename,mode='w')
+    handler.setLevel(level)
+    logging.root.addHandler(handler)
+    logging.root.setLevel(level)
+
+def add_log_stream(stream=sys.stdout,level=logging.INFO):
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(level)
+#    handler.terminator = '\r'
+    logging.root.addHandler(handler)
+    logging.root.setLevel(level)
+        
+def reset_logging():
+    logging.root.handlers.clear()
+    logging.root.addHandler(logging.NullHandler())
+#    for h in logging.root.handlers:
+#        logging.root.removeHandler(h)
 
 #========================================================
 # openCV window interaction.
@@ -94,4 +146,3 @@ color_list = [  (   0,   0, 255),  # red
 
 #========================================================
 
-parindent = ' '*5
