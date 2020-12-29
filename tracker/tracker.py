@@ -9,9 +9,16 @@ import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 from scipy.stats import skew
-from tracker.tank import Tank
-from tracker.utils import *
+from .tank import Tank
+from .utils import *
 import datetime
+
+
+# Message to include in the pickled tracking output. 
+info = \
+'''- n_ind is the number of individuals in the trial.
+- n_extra is the number of extra dark/light regions the tracker keeps track of on top of the n_ind one would normally track. Sometimes the tracker mistakes part of the background for an individual, and one of the actual individuals to be tracked gets discarded. Keeping track of additional contours allows to go back and recover the mistakenly discarded data after the fact.
+- data is a numpy array with size (n_frames,n_ind+n_extra,5). The 5 quantities saved for each contour in each frame are: x coordinate, y coordinate, angle with x axis, area, and aspect ratio.'''
 
 
 class Tracker:
@@ -21,6 +28,7 @@ class Tracker:
                  n_pixel_blur = 3, block_size = 15, threshold_offset = 13, 
                  min_area = 20, max_area = 400, ideal_area = None, 
                  max_aspect = 10, ideal_aspect = None, area_penalty = 1, 
+                 n_extra=1, morph_transform = [], 
                  reversal_threshold = None, significant_displacement = None, 
                  adaptiveMethod = 'gaussian', threshType = 'inv', 
                  bkgSub_options = dict( n_training_frames = 500, 
@@ -30,7 +38,9 @@ class Tracker:
 
         self.input_video    = input_video
         self.output_dir     = output_dir
-        self.n_ind          = n_ind  # number of individuals to track
+        self.n_ind          = n_ind     # number of individuals to track
+        self.n_extra        = n_extra   # number of extra contours to keep track of
+        self.n_track        = self.n_ind+self.n_extra # total contours to keep track of
         self.trial_file     = os.path.join(output_dir,'trial.pik')
         self.settings_file  = os.path.join(output_dir,'settings.txt')
         
@@ -46,7 +56,7 @@ class Tracker:
         self.live_preview   = live_preview
         self.preview_window = 'live tracking preview'
 #        ext,self.codec      = 'avi','DIVX'
-        ext,self.codec      = 'mp4','mp4v'
+        ext,self.codec      = 'mp4','mp4v' # 'FMP4' # 
         self.output_video   = os.path.join(output_dir,'tracked.'+ext)
         
         # Background subtraction.
@@ -70,12 +80,19 @@ class Tracker:
         self.ideal_aspect   = ideal_aspect if ideal_aspect!=None else max_aspect/2
         self.area_penalty   = area_penalty
         
+        # Parameters for morphological operations on contour candidates.
+        # The input parameter should be list of (cv2.MorphType,pixel_radius) pairs.
+        # Here we convert each radius to a kernel.
+#        kernel              = lambda r: np.ones((r,r),np.uint8)
+        kernel              = lambda r: cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(r,r))
+        self.morph          = [ (t,kernel(r)) for t,r in morph_transform ]
+        
         body_size_estimate  = np.sqrt(self.max_area)
         self.reversal_threshold = reversal_threshold if reversal_threshold!=None \
                                   else body_size_estimate*0.05
         self.significant_displacement = significant_displacement if significant_displacement!=None \
                                         else body_size_estimate*0.2
-    
+        
 
     ############################
     # cv2.VideoCapture functions
@@ -86,10 +103,20 @@ class Tracker:
             os.mkdir(self.output_dir)
 
 
-    def init_tank(self):
+    def init_tank(self,img=None,**args):
         self.tank_file = os.path.join(self.output_dir,'tank.pik')
+        self.tank_img_file = os.path.join(self.output_dir,'tank.png')
         self.tank = Tank()
-        self.tank.load_or_locate_and_save(self.tank_file,self.input_video)
+        if not self.tank.load(self.tank_file):
+            for k,v in args.items():
+                self.tank.__dict__[k] = v
+            if type(self.background)!=type(None):
+                self.tank.locate(self.background.astype(np.uint8))
+            else:
+                self.tank.locate_from_video(self.input_video)
+            self.tank.save(self.tank_file)
+            self.tank.save_img(self.tank_img_file)
+#            cv2.imwrite(self.tank_img_file,self.tank.frame)
 
 
     def init_background(self):
@@ -98,7 +125,7 @@ class Tracker:
         if not self.load_background(self.bkg_file):
             self.compute_background()
             self.save_background(self.bkg_file)
-        cv2.imwrite(self.bkg_img_file,self.background)
+            cv2.imwrite(self.bkg_img_file,self.background)
 
 
     def init_tracking_data_structure(self):
@@ -108,9 +135,9 @@ class Tracker:
         # Quantities: x_px, y_px, angle, area.
         # x_px and y_px are the cv2 pixel coordinates
         # (x_px=horizontal, y_px=vertical upside down).
-        self.data = np.empty((0,self.n_ind,4), dtype=np.float)
+        self.data = np.empty((0,self.n_track,5), dtype=np.float)
         self.frame_list = np.array([],dtype=np.int)
-        self.last_known = np.zeros((self.n_ind,4), dtype=int)
+        self.last_known = np.zeros((self.n_track,5), dtype=int)
 
 
     def init_video_input(self):
@@ -138,18 +165,30 @@ class Tracker:
                                     fourcc = fourcc, fps = self.fps, isColor = self.RGB )
 
 
+    def init_tank_mask(self):
+        self.tank_mask = self.tank.create_mask((self.height,self.width))
+        if self.threshType==cv2.THRESH_BINARY_INV:
+            self.tank_mask = cv2.bitwise_not(self.tank_mask)
+        self.tank_mask = np.stack([self.tank_mask]*3,axis=2) # create color channels
+        if self.GPU:
+            self.tank_mask = cv2.UMat(self.tank_mask)
+
+
     def init_all(self):
         self.init_directory()
-        self.init_tank()
         self.init_video_input()
         self.init_video_output()
         self.init_background()
+        self.init_tank()
+        self.init_tank_mask()
         self.init_tracking_data_structure()
 
 
     def release(self):
-        self.cap.release()
-        self.out.release()
+        if 'cap' in self.__dict__.keys():
+            self.cap.release()
+        if 'out' in self.__dict__.keys():
+            self.out.release()
 #        self.cap,self.out = None, None # This should help make the Tracker object picklable.
         cv2.destroyAllWindows()
         cv2.waitKey(1)
@@ -226,7 +265,7 @@ class Tracker:
 
 
     def subtract_background(self):
-        if type(self.background) != type(None):
+        if type(self.background)!=type(None):
             self.frame  = self.frame-self.background
             self.frame *= self.bkgSub_options['contrast_factor']
             self.frame  = np.absolute(self.frame)
@@ -279,26 +318,12 @@ class Tracker:
     ############################
 
 
-    def threshold_detect(self, hist = False):
+    def threshold_detect(self):
         # blur and current image for smoother contours
         blur = cv2.GaussianBlur(self.frame, (self.n_pix_avg, self.n_pix_avg), 0)
-       
         # convert to grayscale
         gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
-
-        if hist:
-            plt.title("Raw image grayscale histogram")
-            plt.hist(self.frame.ravel()[self.frame.ravel() > 0],256)
-            plt.show()
         
-            plt.title("Blurred grayscale histogram")
-            plt.hist(blur.ravel()[blur.ravel() > 0],256)
-            plt.show()
-        
-            plt.title("Grayscale histogram")
-            plt.hist(gray.ravel()[gray.ravel() > 0],256)
-            plt.show()
-    
         # calculate adaptive threshold using cv2
         #   more info:
         #       https://docs.opencv.org/2.4/modules/imgproc/doc/miscellaneous_transformations.html
@@ -312,11 +337,18 @@ class Tracker:
     
     def detect_contours(self):
         self.threshold_detect()
+        
+        # Morphological preprocessing.
+#        cv2.imwrite(os.path.join(self.output_dir,f'frames/{self.frame_num}-2b_thresh0.png'),self.thresh)
+        for i,(t,k) in enumerate(self.morph):
+            self.thresh = cv2.morphologyEx(self.thresh,t,k)
+#            cv2.imwrite(os.path.join(self.output_dir,f'frames/{self.frame_num}-2b_thresh{i+1}.png'),self.thresh)
+        
         # The [-2:] makes this work with openCV versions 3 and 4.
         self.contours, hierarchy = cv2.findContours( self.thresh, 
                                                      cv2.RETR_TREE, 
                                                      cv2.CHAIN_APPROX_SIMPLE )[-2:]
-
+        
         self.new = []
         if self.tracked_frames()==1:
             self.cimg = np.zeros(self.frame.shape[:2])
@@ -324,7 +356,7 @@ class Tracker:
             M = cv2.moments(c)
             # If area is valid, proceed with contour analysis.
             area = M['m00']
-            if self.min_area<=area<=self.max_area:
+            if area>0 and self.min_area<=area<=self.max_area:
                 x     = M['m10'] / area
                 y     = M['m01'] / area
                 theta = 0.5 * np.arctan2(2*M['mu11'], M['mu20']-M['mu02'])
@@ -343,13 +375,18 @@ class Tracker:
                         theta += np.pi
                 if aspect<=self.max_aspect:
                     M['valid'] = True
-                    self.new.append([x,y,theta,area])
+                    self.new.append([x,y,theta,area,aspect])
                     continue
             self.contours[i] = None
-        for i in range(len(self.new),self.n_ind):
-            self.new.append([np.nan]*4)
+        for i in range(len(self.new),self.n_track):
+            self.new.append([np.nan]*5)
         self.new = np.array(self.new,dtype=np.float)
         self.contours = [ c for c in self.contours if type(c)!=type(None) ]
+        
+        # Rank contours from most likely to least likely to be a match.
+        I = self.rank_matches(self.new)
+        self.new = self.new[I]
+        self.contours = [ self.contours[i] for i in I if i<len(self.contours) ]
         
 
     #############################
@@ -364,42 +401,42 @@ class Tracker:
         if len(self.data)==1:
             return last
         # If available, use before-last coordinates to refine guess.
-        penul      = self.data[-2].copy()
-        penul[:,3] = last[:,3] # Don't feed area noise into the prediction.
-        pred       = 2*last - penul
+        penul       = self.data[-2].copy()
+        penul[:,3:] = last[:,3:] # Don't feed area or aspect ratio noise into the prediction.
+        pred        = 2*last - penul
         # If last or penul is nan, use the other.
         # TODO: If last and penul are both nan, look at older coordinates.
-        I          = np.isnan(penul)
-        pred[I]    = last[I]
-        I          = np.isnan(last)
-        pred[I]    = penul[I]
+        I           = np.isnan(penul)
+        pred[I]     = last[I]
+        I           = np.isnan(last)
+        pred[I]     = penul[I]
         # For the angle, use the last known value no matter how old.
-        I          = np.isnan(pred[:,2])
-        pred[I,2]  = self.data[self.last_known[I,2],I,2]
+        I           = np.isnan(pred[:,2])
+        pred[I,2]   = self.data[self.last_known[I,2],I,2]
         return pred
+
+
+    # Rank potential individuals from their current (x,y,area,aspect).
+    # Typically applied to all or part of self.new.
+    def rank_matches(self,matches):
+        # Use the distances to the ideal area and to the ideal aspect ratio 
+        # to quantify contour quality. Give a little more weight to the area.
+        d1 = np.absolute(matches[:,3]/self.ideal_area-1)
+        d2 = np.absolute(matches[:,4]/self.ideal_aspect-1)
+        d  = d1+0.5*d2
+        # TODO: Take another look at the cluster algorithm approach used 
+        # in cvtracer. What situation is it meant to address? Is that idea 
+        # that some fish may be broken into multiple contours?
+        return np.argsort(d)
 
     
     # Use information from past frames to identify the contour corresponding
     # to each fish in the current frame.
     def connect_frames(self):
-        
-        # If there is no previous frame, use the n_ind best contours.
+        # If there is no previous frame, use the n_track best contours.
         # If there aren't enough contours, fill with NaN.
         if len(self.data) == 0:
-            if len(self.new)>self.n_ind:
-                # Use the distance to the ideal area and aspect ratio to measure
-                # contour quality. I don't save the moment-obtained aspect ratio 
-                # so using ellipse fitting to save time/space. Also giving a little 
-                # more weight to the area distance than the aspect one.
-                d1 = np.absolute(self.new[:,3]/self.ideal_area-1)
-                ellipses = [ cv2.fitEllipse(c) for c in self.contours ]
-                aspects  = np.array([ e[1][1]/e[1][0] for e in ellipses ])
-                d2 = np.absolute(aspects/self.ideal_aspect-1)
-                d  = d1+d2
-                # TODO: Take another look at the cluster algorithm approach used 
-                # in cvtracer. What situation is it meant to address? Is that idea 
-                # that some fish may be broken into multiple contours?
-                self.new = self.new[np.argsort(d)][:self.n_ind]
+            self.new = self.new[:self.n_track]
         else:
             # If there is a valid previous frame, compute the generalized distance between
             # every object in the frame and every object in the previous frame, then solve
@@ -423,8 +460,16 @@ class Tracker:
             coord_pred[I,2] *= self.area_penalty
             d[I]             = 1e4*cdist(coord_pred[I],coord_new)
             d[np.isnan(d)]   = 1e8
-            Io,In = linear_sum_assignment(d)
-            self.new = self.new[In]
+            # First match the two sets of n_ind best contours, then match the two sets 
+            # of extra contours.
+            # There must be a better way, but including extra contours in the linear 
+            # assignment is tricky because lost fish get replaced with spurious contours 
+            # which then get prioritized when the actual fish reappears.
+            Io,In = linear_sum_assignment(d[:self.n_ind,:self.n_ind])
+            self.new[:self.n_ind] = self.new[In]
+            Io,In = linear_sum_assignment(d[self.n_ind:,self.n_ind:])
+            self.new[self.n_ind:self.n_track] = self.new[self.n_ind:][In[:self.n_extra]]
+            self.new = self.new[:self.n_track]
             
             # TODO: When a fish is missing use its last known position or some prediction 
             # based on it. Caveat: if the last known position is old, try to match recently
@@ -465,21 +510,10 @@ class Tracker:
     
         
     def mask_tank(self):
-        x = int(self.tank.x_px)
-        y = int(self.tank.y_px)
-        R = int(self.tank.r_px) + 1 # ??
         if self.threshType==cv2.THRESH_BINARY_INV:
-            tank_mask = 255*np.ones_like(self.frame)
-            if self.GPU:
-                tank_mask = cv2.UMat(tank_mask)
-            cv2.circle(tank_mask, (x,y), R, (0,0,0), thickness=-1)
-            self.frame = cv2.bitwise_or(self.frame, tank_mask)
+            self.frame = cv2.bitwise_or(self.frame, self.tank_mask)
         else:
-            tank_mask = np.zeros_like(self.frame)
-            if self.GPU:
-                tank_mask = cv2.UMat(tank_mask)
-            cv2.circle(tank_mask, (x,y), R, (255,255,255), thickness=-1)
-            self.frame = cv2.bitwise_and(self.frame, tank_mask)
+            self.frame = cv2.bitwise_and(self.frame, self.tank_mask)
 
 
 #    def mask_contours(self):
@@ -507,7 +541,8 @@ class Tracker:
 
     def draw(self, tank=True, contours=False, 
              contour_color=(0,0,0), contour_thickness=1,
-             points=True, directors=True, timestamp=True):
+             points=True, directors=True, extra_points=False, 
+             timestamp=True):
         if tank:
             self.draw_tank(self.tank)
         if contours:
@@ -516,6 +551,8 @@ class Tracker:
             self.draw_points()
         if directors:
             self.draw_directors()
+        if extra_points:
+            self.draw_extra_points()
         if timestamp:
             self.draw_tstamp()
 
@@ -529,8 +566,7 @@ class Tracker:
     
     def draw_tank(self, tank):
         color = (0,0,0) if self.RGB else 0
-        cv2.circle(self.frame, (int(tank.x_px), int(tank.y_px)), int(tank.r_px),
-                   color, thickness=1)
+        self.tank.draw_outline(self.frame,color=color,thickness=1)
 
     
     # Draw every contour.
@@ -541,7 +577,7 @@ class Tracker:
 
     # Draw center of each individual as a dot.
     def draw_points(self):
-        XY = self.new[:,:2]
+        XY = self.new[:self.n_ind,:2]
         for i,(x,y) in enumerate(XY):
             if not (np.isnan(x) or np.isnan(y)):
                 x,y = int(x),int(y)
@@ -562,6 +598,17 @@ class Tracker:
                                 thickness=2, tipLength=0.3)
 
 
+    # Draw the extra (n_track-n_ind) contours we keep track of just in case.
+    def draw_extra_points(self,size=5):
+        XY = self.new[self.n_ind:,:2]
+        for i,(x,y) in enumerate(XY):
+            if not (np.isnan(x) or np.isnan(y)):
+                x,y = int(x),int(y)
+                color = self.colors[(i+self.n_ind)%len(self.colors)] if self.RGB else 0
+                cv2.line(self.frame, (x-size,y-size), (x+size,y+size) , color, 2)
+                cv2.line(self.frame, (x-size,y+size), (x+size,y-size) , color, 2)
+        
+        
     ############################
     # Save/Load
     ############################
@@ -574,7 +621,8 @@ class Tracker:
     
 
     def save_settings(self, fname = None):
-        keys = [ 't_start', 't_end', 'n_frames', 'frame_start', 'frame_end', 'frame_num', 
+        keys = [ 't_start', 't_end', 
+                 'n_frames', 'frame_start', 'frame_end', 'frame_num', 
                  'bkgSub_options', 'n_pix_avg', 'block_size', 
                  'offset', 'threshMax', 'adaptiveMethod', 'threshType', 
                  'min_area', 'max_area', 'ideal_area', 'reversal_threshold', 
@@ -585,10 +633,12 @@ class Tracker:
             
 
     def save_trial(self, fname = None):
-        keys = [ 'input_video', 'output_dir', 'n_ind', 'fps', 'tank', 'data', 'frame_list' ]
+        D = { k:self.__dict__[k] for k in [ 'input_video', 'output_dir', 'n_ind', 'n_extra', 'fps', 'data', 'frame_list' ] }
+        D['tank'] = self.tank.to_dict()
+        D['info'] = info
         if fname == None:
             fname = self.trial_file
-        save_pik( fname, { k:self.__dict__[k] for k in keys } )
+        save_pik( fname, D )
 
 
 # Remaining variables (not in settings or trial):

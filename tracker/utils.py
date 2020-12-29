@@ -62,7 +62,11 @@ def reset_logging():
 #========================================================
 # openCV window interaction.
 
-return_key,esc_key,space_key,backspace_key = 13,27,32,8 # Key codes for cv2.waitKey.
+# Key codes for cv2.waitKey.
+return_key,esc_key,space_key,backspace_key = 13,27,32,8
+plus_key,minus_key,zero_key = 61,45,48
+lbrack_key,rbrack_key = 91,93
+
 
 #default_window_size = 800,800
 screen = screeninfo.get_monitors()[0]
@@ -112,7 +116,6 @@ def save_pik(filename, data_dict):
         pickle.dump(data_dict, f, protocol = 3)
 
 def load_pik(filename):
-    data_dict = {}
     with open(filename,'rb') as f:
         return pickle.load(f)
 
