@@ -12,8 +12,8 @@ from scipy.stats import skew
 from .tank import Tank
 from .utils import *
 import datetime
-
-
+import enum
+    
 # Message to include in the pickled tracking output. 
 info = \
 '''- n_ind is the number of individuals in the trial.
@@ -30,10 +30,12 @@ class Tracker:
                  max_aspect = 10, ideal_aspect = None, area_penalty = 1, 
                  n_extra=1, morph_transform = [], 
                  reversal_threshold = None, significant_displacement = None, 
-                 adaptiveMethod = 'gaussian', threshType = 'inv', 
+                 adaptiveMethod = 'gaussian', 
+                 background_type = 'light', # light or dark
                  bkgSub_options = dict( n_training_frames = 500, 
                                         t_start = 0, t_end = -1,
-                                        contrast_factor = 4 ), 
+                                        contrast_factor = 4,
+                                        secondary_subtraction = True ), 
                  RGB = True, live_preview = False, GPU = False, **args ):
 
         self.input_video    = input_video
@@ -61,6 +63,7 @@ class Tracker:
         
         # Background subtraction.
         self.background     = None
+        self.background2    = None
         self.bkgSub_options = bkgSub_options
 
         # Tracking parameters.
@@ -71,8 +74,7 @@ class Tracker:
         self.threshMax      = 100
         self.adaptiveMethod = cv2.ADAPTIVE_THRESH_GAUSSIAN_C if adaptiveMethod=='gaussian' \
                               else cv2.ADAPTIVE_THRESH_MEAN_C
-        self.threshType     = cv2.THRESH_BINARY_INV if threshType=='inv' \
-                              else cv2.THRESH_BINARY
+        self.bkg_type       = background_type
         self.min_area       = max(min_area,1)
         self.max_area       = max_area
         self.ideal_area     = ideal_area if ideal_area!=None else (min_area+max_area)/2
@@ -83,7 +85,6 @@ class Tracker:
         # Parameters for morphological operations on contour candidates.
         # The input parameter should be list of (cv2.MorphType,pixel_radius) pairs.
         # Here we convert each radius to a kernel.
-#        kernel              = lambda r: np.ones((r,r),np.uint8)
         kernel              = lambda r: cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(r,r))
         self.morph          = [ (t,kernel(r)) for t,r in morph_transform ]
         
@@ -122,10 +123,21 @@ class Tracker:
     def init_background(self):
         self.bkg_file       = os.path.join(self.output_dir,'background.npz')
         self.bkg_img_file   = os.path.join(self.output_dir,'background.png')
-        if not self.load_background(self.bkg_file):
+        self.background     = self.load_background(self.bkg_file)
+        if self.background is None:
             self.compute_background()
-            self.save_background(self.bkg_file)
+            self.save_background(self.bkg_file,self.background)
             cv2.imwrite(self.bkg_img_file,self.background)
+
+
+    def init_secondary_background(self):
+        self.bkg_file2      = os.path.join(self.output_dir,'background2.npz')
+        self.bkg_img_file2  = os.path.join(self.output_dir,'background2.png')
+        self.background2    = self.load_background(self.bkg_file2)
+        if self.background2 is None:
+            self.compute_secondary_background()
+            self.save_background(self.bkg_file2,self.background2)
+            cv2.imwrite(self.bkg_img_file2,255-self.background2)
 
 
     def init_tracking_data_structure(self):
@@ -137,7 +149,7 @@ class Tracker:
         # (x_px=horizontal, y_px=vertical upside down).
         self.data = np.empty((0,self.n_track,5), dtype=np.float)
         self.frame_list = np.array([],dtype=np.int)
-        self.last_known = np.zeros((self.n_track,5), dtype=int)
+        self.last_known = np.zeros((self.n_track,), dtype=int) # frame index of last known position
 
 
     def init_video_input(self):
@@ -167,11 +179,14 @@ class Tracker:
 
     def init_tank_mask(self):
         self.tank_mask = self.tank.create_mask((self.height,self.width))
-        if self.threshType==cv2.THRESH_BINARY_INV:
-            self.tank_mask = cv2.bitwise_not(self.tank_mask)
+        self.tank_mask = cv2.bitwise_not(self.tank_mask)
         self.tank_mask = np.stack([self.tank_mask]*3,axis=2) # create color channels
         if self.GPU:
             self.tank_mask = cv2.UMat(self.tank_mask)
+        if not self.background2 is None:
+            self.background2 *= (255-self.tank_mask)/255
+            fn = os.path.join(self.output_dir,'background2_masked.png')
+            cv2.imwrite(fn,255-self.background2)
 
 
     def init_all(self):
@@ -179,6 +194,8 @@ class Tracker:
         self.init_video_input()
         self.init_video_output()
         self.init_background()
+        if self.bkgSub_options['secondary_subtraction']:
+            self.init_secondary_background()
         self.init_tank()
         self.init_tank_mask()
         self.init_tracking_data_structure()
@@ -189,7 +206,6 @@ class Tracker:
             self.cap.release()
         if 'out' in self.__dict__.keys():
             self.out.release()
-#        self.cap,self.out = None, None # This should help make the Tracker object picklable.
         cv2.destroyAllWindows()
         cv2.waitKey(1)
         logging.info(f'{parindent}Video capture released')
@@ -209,6 +225,8 @@ class Tracker:
             ret, self.frame = self.cap.read()
             if ret == True:
                 self.frame_num += 1
+                if self.bkg_type=='dark':
+                    self.frame = 255-self.frame
                 if self.GPU:
                     self.frame = cv2.UMat(self.frame)
                 return True
@@ -224,22 +242,20 @@ class Tracker:
         ext = os.path.splitext(bkg_file)[1]
         if os.path.exists(bkg_file):
             if ext=='.npy':
-                self.background = np.load(bkg_file)
-                return True
+                return np.load(bkg_file)
             if ext=='.npz':
                 # Assume there's only one variable in the file.
-                self.background = next(iter(np.load(bkg_file).values()))
-                return True
-        return False
+                return next(iter(np.load(bkg_file).values()))
+        return None
 
 
-    def save_background(self, bkg_file):
+    def save_background(self, bkg_file, bkg):
         ext = os.path.splitext(bkg_file)[1]
         if ext=='.npy':
-            np.save(bkg_file,self.background)
+            np.save(bkg_file,bkg)
             return True
         if ext=='.npz':
-            np.savez_compressed(bkg_file,background=self.background)
+            np.savez_compressed(bkg_file,background=bkg)
             return True
         return False
 
@@ -264,12 +280,36 @@ class Tracker:
         self.background /= count
 
 
+    def compute_secondary_background(self):
+        logging.info(parindent+'Computing secondary background')
+        t_start    = self.bkgSub_options['t_start']
+        t_end      = self.bkgSub_options['t_end']
+        n_training = self.bkgSub_options['n_training_frames']
+        i_start    = max( 0, int(t_start*self.fps) )
+        i_end      = int(t_end*self.fps) if t_end>0 else self.n_frames-1
+        i_end      = min( self.n_frames-1, i_end )
+        training_frames = np.linspace(i_start, i_end, n_training, dtype=int)
+        self.background2 = np.zeros_like(self.background)
+        count = 0
+        for i in training_frames:
+            self.set_frame(i)
+            if self.get_next_frame():
+                self.background2 += np.absolute(self.frame-self.background)
+                count            += 1
+        self.background2 *= self.bkgSub_options['contrast_factor']/count
+
+
     def subtract_background(self):
-        if type(self.background)!=type(None):
+        if not self.background is None:
             self.frame  = self.frame-self.background
             self.frame *= self.bkgSub_options['contrast_factor']
             self.frame  = np.absolute(self.frame)
             self.frame  = (255 - np.minimum(255, self.frame)).astype(np.uint8)
+            
+    
+    def subtract_secondary_background(self):
+        if not self.background2 is None:
+            self.frame = np.minimum(255,self.frame+self.background2).astype(np.uint8)
             
     
     def init_live_preview(self):
@@ -330,7 +370,7 @@ class Tracker:
         self.thresh = cv2.adaptiveThreshold( gray, 
                                              maxValue = self.threshMax, 
                                              adaptiveMethod = self.adaptiveMethod,
-                                             thresholdType = self.threshType,
+                                             thresholdType = cv2.THRESH_BINARY_INV,
                                              blockSize = self.block_size, 
                                              C = self.offset )
     
@@ -381,7 +421,7 @@ class Tracker:
         for i in range(len(self.new),self.n_track):
             self.new.append([np.nan]*5)
         self.new = np.array(self.new,dtype=np.float)
-        self.contours = [ c for c in self.contours if type(c)!=type(None) ]
+        self.contours = [ c for c in self.contours if not (c is None) ]
         
         # Rank contours from most likely to least likely to be a match.
         I = self.rank_matches(self.new)
@@ -412,7 +452,7 @@ class Tracker:
         pred[I]     = penul[I]
         # For the angle, use the last known value no matter how old.
         I           = np.isnan(pred[:,2])
-        pred[I,2]   = self.data[self.last_known[I,2],I,2]
+        pred[I,2]   = self.data[self.last_known[I],I,2]
         return pred
 
 
@@ -451,15 +491,15 @@ class Tracker:
             d                = cdist(coord_pred,coord_new)
             # Use a two-tiered penalty system for missing fish.
             # If a fish has no predicted coordinates (NaN), use its last known position
-            # but increase the distance a by a factor 1e4 so recently seen fish get
-            # matched first.
+            # but add a distance penalty of 1e4 so recently seen fish get matched first.
             # If a fish has no last known position set the distance to 1e8 so those get
             # matched last.
-            I                = np.nonzero(np.isnan(coord_pred))[0]
-            coord_pred[I]    = self.last_known[I][:,[0,1,3]]
+            I                = np.nonzero(np.any(np.isnan(coord_pred),axis=1))[0]
+            coord_pred[I]    = self.data[self.last_known[I],I][:,[0,1,3]]
             coord_pred[I,2] *= self.area_penalty
-            d[I]             = 1e4*cdist(coord_pred[I],coord_new)
+            d[I]             = 1e4 + cdist(coord_pred[I],coord_new)
             d[np.isnan(d)]   = 1e8
+            
             # First match the two sets of n_ind best contours, then match the two sets 
             # of extra contours.
             # There must be a better way, but including extra contours in the linear 
@@ -467,8 +507,8 @@ class Tracker:
             # which then get prioritized when the actual fish reappears.
             Io,In = linear_sum_assignment(d[:self.n_ind,:self.n_ind])
             self.new[:self.n_ind] = self.new[In]
-            Io,In = linear_sum_assignment(d[self.n_ind:,self.n_ind:])
-            self.new[self.n_ind:self.n_track] = self.new[self.n_ind:][In[:self.n_extra]]
+            Io2,In2 = linear_sum_assignment(d[self.n_ind:,self.n_ind:])
+            self.new[self.n_ind:self.n_track] = self.new[self.n_ind:][In2[:self.n_extra]]
             self.new = self.new[:self.n_track]
             
             # TODO: When a fish is missing use its last known position or some prediction 
@@ -485,7 +525,7 @@ class Tracker:
             # 1. Look for continuity with the predicted value. Use last known value rather than
             # predicted value to avoid reversal instability following a very quick turn (as 
             # happens e.g. when contours merge).
-            dtheta  = self.new[:,2]-self.last_known[:,2]
+            dtheta  = self.new[:,2]-self.data[self.last_known,range(self.n_track),2]
             dtheta[np.isnan(dtheta)] = 0 # Avoid nan propagating from predicted to new.
             self.new[:,2] -= np.pi*np.rint(dtheta/np.pi)
             # 2. Reverse direction if recent motion as been against it.
@@ -500,8 +540,8 @@ class Tracker:
         
         self.data = np.append(self.data, [self.new], axis=0)
         self.frame_list = np.append(self.frame_list,self.frame_num)
-        I = ~np.isnan(self.new)
-        self.last_known[I] = self.new[I]
+        I = ~np.any(np.isnan(self.new),axis=1)
+        self.last_known[I] = len(self.data)-1
     
         
     ############################
@@ -510,10 +550,7 @@ class Tracker:
     
         
     def mask_tank(self):
-        if self.threshType==cv2.THRESH_BINARY_INV:
-            self.frame = cv2.bitwise_or(self.frame, self.tank_mask)
-        else:
-            self.frame = cv2.bitwise_and(self.frame, self.tank_mask)
+        self.frame = cv2.bitwise_or(self.frame, self.tank_mask)
 
 
 #    def mask_contours(self):
@@ -624,7 +661,7 @@ class Tracker:
         keys = [ 't_start', 't_end', 
                  'n_frames', 'frame_start', 'frame_end', 'frame_num', 
                  'bkgSub_options', 'n_pix_avg', 'block_size', 
-                 'offset', 'threshMax', 'adaptiveMethod', 'threshType', 
+                 'offset', 'threshMax', 'adaptiveMethod', 'bkg_type', 
                  'min_area', 'max_area', 'ideal_area', 'reversal_threshold', 
                  'significant_displacement' ]
         if fname == None:
