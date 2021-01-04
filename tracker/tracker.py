@@ -35,8 +35,13 @@ class Tracker:
                  bkgSub_options = dict( n_training_frames = 500, 
                                         t_start = 0, t_end = -1,
                                         contrast_factor = 4,
-                                        secondary_subtraction = True ), 
-                 RGB = True, live_preview = False, GPU = False, **args ):
+                                        secondary_subtraction = True,
+                                        secondary_factor = 1 ), 
+                video_output_options = dict( tank=True, points=False, directors=True, 
+                                        extra_points=True, timestamp=True, 
+                                        contours=True, contour_color=(100,255,0), 
+                                        contour_thickness=1 ), 
+                 save_video = True, live_preview = False, RGB = True, **args ):
 
         self.input_video    = input_video
         self.output_dir     = output_dir
@@ -47,7 +52,6 @@ class Tracker:
         self.settings_file  = os.path.join(output_dir,'settings.txt')
         
         self.colors         = color_list     
-        self.GPU            = GPU
 
         # Video input.
         self.t_start        = t_start
@@ -57,9 +61,11 @@ class Tracker:
         self.RGB            = RGB
         self.live_preview   = live_preview
         self.preview_window = 'live tracking preview'
+        self.save_video     = save_video
 #        ext,self.codec      = 'avi','DIVX'
         ext,self.codec      = 'mp4','mp4v' # 'FMP4' # 
         self.output_video   = os.path.join(output_dir,'tracked.'+ext)
+        self.video_output_options = video_output_options
         
         # Background subtraction.
         self.background     = None
@@ -169,30 +175,29 @@ class Tracker:
         
         
     def init_video_output(self):
-        # Video writer class to output video with contour and centroid of tracked
-        # object(s) make sure the frame size matches size of array 'final'
-        fourcc = cv2.VideoWriter_fourcc(*self.codec)
-        self.out = cv2.VideoWriter( filename = self.output_video, 
-                                    frameSize = (self.width,self.height), 
-                                    fourcc = fourcc, fps = self.fps, isColor = self.RGB )
-
+        if self.save_video:
+            # Video writer class to output video with contour and centroid of tracked
+            # object(s) make sure the frame size matches size of array 'final'
+            fourcc = cv2.VideoWriter_fourcc(*self.codec)
+            self.out = cv2.VideoWriter( filename = self.output_video, 
+                                        frameSize = (self.width,self.height), 
+                                        fourcc = fourcc, fps = self.fps, isColor = self.RGB )
+        else:
+            self.out = None
 
     def init_tank_mask(self):
         self.tank_mask = self.tank.create_mask((self.height,self.width))
         self.tank_mask = cv2.bitwise_not(self.tank_mask)
         self.tank_mask = np.stack([self.tank_mask]*3,axis=2) # create color channels
-        if self.GPU:
-            self.tank_mask = cv2.UMat(self.tank_mask)
         if not self.background2 is None:
             self.background2 *= (255-self.tank_mask)/255
-            fn = os.path.join(self.output_dir,'background2_masked.png')
-            cv2.imwrite(fn,255-self.background2)
 
 
     def init_all(self):
         self.init_directory()
         self.init_video_input()
-        self.init_video_output()
+        if self.save_video:
+            self.init_video_output()
         self.init_background()
         if self.bkgSub_options['secondary_subtraction']:
             self.init_secondary_background()
@@ -204,7 +209,7 @@ class Tracker:
     def release(self):
         if 'cap' in self.__dict__.keys():
             self.cap.release()
-        if 'out' in self.__dict__.keys():
+        if 'out' in self.__dict__.keys() and not self.out is None:
             self.out.release()
         cv2.destroyAllWindows()
         cv2.waitKey(1)
@@ -227,8 +232,6 @@ class Tracker:
                 self.frame_num += 1
                 if self.bkg_type=='dark':
                     self.frame = 255-self.frame
-                if self.GPU:
-                    self.frame = cv2.UMat(self.frame)
                 return True
         return False
 
@@ -296,7 +299,8 @@ class Tracker:
             if self.get_next_frame():
                 self.background2 += np.absolute(self.frame-self.background)
                 count            += 1
-        self.background2 *= self.bkgSub_options['contrast_factor']/count
+        self.background2 = np.minimum(255, 
+                            self.background2*self.bkgSub_options['contrast_factor']/count)
 
 
     def subtract_background(self):
@@ -304,23 +308,25 @@ class Tracker:
             self.frame  = self.frame-self.background
             self.frame *= self.bkgSub_options['contrast_factor']
             self.frame  = np.absolute(self.frame)
+            self.frame  = np.minimum(255, self.frame)
             self.frame  = (255 - np.minimum(255, self.frame)).astype(np.uint8)
             
     
     def subtract_secondary_background(self):
         if not self.background2 is None:
-            self.frame = np.minimum(255,self.frame+self.background2).astype(np.uint8)
-            
-    
+            self.frame = np.minimum(255, self.frame 
+                           + self.background2 *self.bkgSub_options['secondary_factor']
+                           ).astype(np.uint8)
+
+
     def init_live_preview(self):
         if (self.live_preview):
             create_named_window(self.preview_window)
     
 
     def write_frame(self):
-        if self.GPU:
-            self.frame = cv2.UMat.get(self.frame)
-        return self.out.write(self.frame)
+        if self.save_video:
+            return self.out.write(self.frame)
 
         
     def post_frame(self,delay=None):
@@ -351,7 +357,38 @@ class Tracker:
 
     def get_percent_complete(self):
         return 100*(self.frame_num-self.frame_start)/(self.frame_end-self.frame_start)
-        
+
+
+    def track_next_frame(self,save_frames=False):
+        if not self.get_next_frame():
+            return False
+        b = save_frames if isinstance(save_frames,bool) else save_frames(self.frame_num)
+        frames_dir  = os.path.join(self.output_dir,'frames')
+        frames_path = lambda fn: os.path.join(frames_dir,f'{self.frame_num}-'+fn)
+        if b:
+            if not os.path.exists(frames_dir):
+                os.mkdir(frames_dir)
+            cv2.imwrite(frames_path('1_raw.png'),self.frame)
+        self.subtract_background()
+        if b:
+            cv2.imwrite(frames_path('2a_bkg-subtracted.png'),self.frame)
+        self.subtract_secondary_background()
+        if b:
+            cv2.imwrite(frames_path('2b_bkg2-subtracted.png'),self.frame)
+        self.mask_tank()
+        self.detect_contours()
+        self.connect_frames()
+        if b:
+            opt = self.video_output_options.copy()
+            opt.update(points=False,extra_points=False,directors=False)
+            self.draw(**opt)
+            cv2.imwrite(frames_path('3_contours.png'),self.frame)
+        if b:
+            self.draw(**self.video_output_options)
+            cv2.imwrite(frames_path('4_directors.png'),self.frame)
+        self.write_frame()
+        return self.post_frame(delay=1)
+
 
     ############################
     # Contour functions
@@ -364,16 +401,17 @@ class Tracker:
         # convert to grayscale
         gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
         
-        # calculate adaptive threshold using cv2
-        #   more info:
-        #       https://docs.opencv.org/2.4/modules/imgproc/doc/miscellaneous_transformations.html
-        self.thresh = cv2.adaptiveThreshold( gray, 
-                                             maxValue = self.threshMax, 
-                                             adaptiveMethod = self.adaptiveMethod,
-                                             thresholdType = cv2.THRESH_BINARY_INV,
-                                             blockSize = self.block_size, 
-                                             C = self.offset )
-    
+        if self.block_size>0:
+            self.thresh = cv2.adaptiveThreshold( gray, 
+                                                 maxValue = self.threshMax, 
+                                                 adaptiveMethod = self.adaptiveMethod,
+                                                 thresholdType = cv2.THRESH_BINARY_INV,
+                                                 blockSize = self.block_size, 
+                                                 C = self.offset )
+        else:
+            self.thresh = cv2.threshold( gray, maxValue = 255-self.offset, 
+                                         thresholdType = cv2.THRESH_BINARY_INV )
+
     
     def detect_contours(self):
         self.threshold_detect()
@@ -500,16 +538,38 @@ class Tracker:
             d[I]             = 1e4 + cdist(coord_pred[I],coord_new)
             d[np.isnan(d)]   = 1e8
             
-            # First match the two sets of n_ind best contours, then match the two sets 
-            # of extra contours.
-            # There must be a better way, but including extra contours in the linear 
-            # assignment is tricky because lost fish get replaced with spurious contours 
-            # which then get prioritized when the actual fish reappears.
-            Io,In = linear_sum_assignment(d[:self.n_ind,:self.n_ind])
+            # First look for matches for the previous frame's fish, then look for matches
+            # for the previous frame's extra contours.
+            # This is tricky to get right. Lost fish can get replaced with spurious 
+            # contours which then get prioritized when the actual fish reappears.
+            Io,In = linear_sum_assignment(d[:self.n_ind,:])
             self.new[:self.n_ind] = self.new[In]
-            Io2,In2 = linear_sum_assignment(d[self.n_ind:,self.n_ind:])
-            self.new[self.n_ind:self.n_track] = self.new[self.n_ind:][In2[:self.n_extra]]
+            Ie = np.array([ i for i in range(self.n_track) if i not in In ])
+            Io2,In2 = linear_sum_assignment(d[self.n_ind:,Ie])
+            self.new[self.n_ind:self.n_track] = self.new[Ie[In2]]
             self.new = self.new[:self.n_track]
+#            # Alternative approach: Only use the best n_ind contours to look for matches
+#            # for the previous frame's fish.
+#            Io,In = linear_sum_assignment(d[:self.n_ind,:self.n_ind])
+#            self.new[:self.n_ind] = self.new[In]
+#            Io2,In2 = linear_sum_assignment(d[self.n_ind:,self.n_ind:])
+#            self.new[self.n_ind:self.n_track] = self.new[self.n_ind:][In2[:self.n_extra]]
+#            self.new = self.new[:self.n_track]
+            
+            
+#            if self.frame_num==47:
+#                with np.printoptions(precision=1,suppress=True):
+#                    print('\ncoord_pred')
+#                    print(coord_pred)
+#                    print('\ncoord_new')
+#                    print(coord_new)
+#                    print('\nd')
+#                    print(d)
+#                    print('\nI0,In,Ie')
+#                    print(Io,In,Ie)
+#                    print('\nself.new')
+#                    print(self.new[:,[0,1,3]])
+            
             
             # TODO: When a fish is missing use its last known position or some prediction 
             # based on it. Caveat: if the last known position is old, try to match recently
@@ -679,4 +739,4 @@ class Tracker:
 
 
 # Remaining variables (not in settings or trial):
-# keys = [ 'trial_file', 'colors', 'GPU', 'cap', 'width', 'height', 'RGB', 'live_preview', 'preview_window', 'codec', 'output_video', 'out', 'tank_file', 'background', 'bkg_file', 'bkg_img_file', 'thresh', 'contours', 'moments', 'frame', 'new' ]
+# keys = [ 'trial_file', 'colors', 'cap', 'width', 'height', 'RGB', 'live_preview', 'preview_window', 'codec', 'output_video', 'out', 'tank_file', 'background', 'bkg_file', 'bkg_img_file', 'thresh', 'contours', 'moments', 'frame', 'new' ]
