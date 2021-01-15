@@ -14,7 +14,6 @@ class Tank:
         self.xc      = 0
         self.yc      = 0
         self.R       = 0
-        self.found   = False
         self.raw_frame = None
         self.frame   = None
         self.wname   = None
@@ -71,7 +70,7 @@ class Tank:
         # Close video.
         cap.release()
         # Locate the tank.
-        self.locate(frame)
+        return self.locate(frame)
         
 
     def locate(self,img):
@@ -85,6 +84,11 @@ class Tank:
         while True:
             k = wait_on_named_window(self.wname)
             if k == -2:
+                self.points  = []
+                self.contour = []
+                self.raw_frame = None
+                self.frame   = None
+                self.wname   = None
                 return self.interrupt('Tank detection interrupted.')
             elif k == space_key:
                 if len(self.points)>0: # Accept the current shape.

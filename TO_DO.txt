@@ -2,3 +2,4 @@
 - Fix aspect ratio of cv2 windows in Windows10.
 
 - [?] Try out regular (non-adaptive) thresholding in combination with simple background subtraction.
+

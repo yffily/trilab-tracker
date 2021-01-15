@@ -117,13 +117,11 @@ class Tracker:
         if not self.tank.load(self.tank_file):
             for k,v in args.items():
                 self.tank.__dict__[k] = v
-            if type(self.background)!=type(None):
-                self.tank.locate(self.background.astype(np.uint8))
-            else:
-                self.tank.locate_from_video(self.input_video)
-            self.tank.save(self.tank_file)
-            self.tank.save_img(self.tank_img_file)
-#            cv2.imwrite(self.tank_img_file,self.tank.frame)
+            b = (self.background is None)
+            if ( b and self.tank.locate_from_video(self.input_video) ) \
+                or ( (not b) and self.tank.locate(self.background.astype(np.uint8)) ):
+                self.tank.save(self.tank_file)
+                self.tank.save_img(self.tank_img_file)
 
 
     def init_background(self):

@@ -110,7 +110,9 @@ class Track:
                     cv2.line(self.frame, xy[0], xy[3], color, marker_lw)
                     cv2.line(self.frame, xy[1], xy[2], color, marker_lw)
         mask = np.any(self.overlay!=0,axis=2)
-        self.frame[mask] = cv2.addWeighted(self.frame[mask],1-alpha,self.overlay[mask],alpha,0)
+        if np.sum(mask)>0:
+            self.frame[mask] = cv2.addWeighted(self.frame[mask], 1-alpha, 
+                                               self.overlay[mask], alpha, 0)
 
 
 class MainWindow(QtWidgets.QMainWindow):
