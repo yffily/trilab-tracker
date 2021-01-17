@@ -11,6 +11,7 @@ from scipy.spatial.distance import cdist
 from scipy.stats import skew
 from .tank import Tank
 from .utils import *
+from .frame import FrameAnalyzer
 import datetime
 import enum
     
@@ -31,7 +32,6 @@ class Tracker:
                  n_extra=1, morph_transform = [], 
                  reversal_threshold = None, significant_displacement = None, 
                  adaptiveMethod = 'gaussian', 
-                 background_type = 'light', # light or dark
                  bkgSub_options = dict( n_training_frames = 500, 
                                         t_start = 0, t_end = -1,
                                         contrast_factor = 4,
@@ -41,7 +41,7 @@ class Tracker:
                                         extra_points=True, timestamp=True, 
                                         contours=True, contour_color=(100,255,0), 
                                         contour_thickness=1 ), 
-                 save_video = True, live_preview = False, RGB = True, **args ):
+                 save_video = True, **args ):
 
         self.input_video    = input_video
         self.output_dir     = output_dir
@@ -58,9 +58,6 @@ class Tracker:
         self.t_end          = t_end
         
         # Video output.
-        self.RGB            = RGB
-        self.live_preview   = live_preview
-        self.preview_window = 'live tracking preview'
         self.save_video     = save_video
 #        ext,self.codec      = 'avi','DIVX'
         ext,self.codec      = 'mp4','mp4v' # 'FMP4' # 
@@ -68,8 +65,6 @@ class Tracker:
         self.video_output_options = video_output_options
         
         # Background subtraction.
-        self.background     = None
-        self.background2    = None
         self.bkgSub_options = bkgSub_options
 
         # Tracking parameters.
@@ -77,10 +72,6 @@ class Tracker:
         self.thresh         = []
         self.block_size     = block_size
         self.offset         = threshold_offset
-        self.threshMax      = 100
-        self.adaptiveMethod = cv2.ADAPTIVE_THRESH_GAUSSIAN_C if adaptiveMethod=='gaussian' \
-                              else cv2.ADAPTIVE_THRESH_MEAN_C
-        self.bkg_type       = background_type
         self.min_area       = max(min_area,1)
         self.max_area       = max_area
         self.ideal_area     = ideal_area if ideal_area!=None else (min_area+max_area)/2
@@ -117,35 +108,34 @@ class Tracker:
         if not self.tank.load(self.tank_file):
             for k,v in args.items():
                 self.tank.__dict__[k] = v
-            b = (self.background is None)
+            b = (self.frame.bkg is None)
             if ( b and self.tank.locate_from_video(self.input_video) ) \
-                or ( (not b) and self.tank.locate(self.background.astype(np.uint8)) ):
+                or ( (not b) and self.tank.locate(self.frame.bkg.astype(np.uint8)) ):
                 self.tank.save(self.tank_file)
                 self.tank.save_img(self.tank_img_file)
 
 
     def init_background(self):
-        self.bkg_file       = os.path.join(self.output_dir,'background.npz')
-        self.bkg_img_file   = os.path.join(self.output_dir,'background.png')
-        self.background     = self.load_background(self.bkg_file)
-        if self.background is None:
+        self.bkg_file     = os.path.join(self.output_dir,'background.npz')
+        self.bkg_img_file = os.path.join(self.output_dir,'background.png')
+        self.frame.bkg    = self.load_background(self.bkg_file)
+        if self.frame.bkg is None:
             self.compute_background()
-            self.save_background(self.bkg_file,self.background)
-            cv2.imwrite(self.bkg_img_file,self.background)
+            self.save_background(self.bkg_file,self.frame.bkg)
+            cv2.imwrite(self.bkg_img_file,self.frame.bkg)
 
 
     def init_secondary_background(self):
-        self.bkg_file2      = os.path.join(self.output_dir,'background2.npz')
-        self.bkg_img_file2  = os.path.join(self.output_dir,'background2.png')
-        self.background2    = self.load_background(self.bkg_file2)
-        if self.background2 is None:
+        self.bkg_file2     = os.path.join(self.output_dir,'background2.npz')
+        self.bkg_img_file2 = os.path.join(self.output_dir,'background2.png')
+        self.frame.bkg2    = self.load_background(self.bkg_file2)
+        if self.frame.bkg2 is None:
             self.compute_secondary_background()
-            self.save_background(self.bkg_file2,self.background2)
-            cv2.imwrite(self.bkg_img_file2,255-self.background2)
+            self.save_background(self.bkg_file2, self.frame.bkg2)
+            cv2.imwrite(self.bkg_img_file2, 255-self.frame.bkg2)
 
 
     def init_tracking_data_structure(self):
-        self.contours       = []
         # The output of the tracking is stored in a numpy array.
         # Axes: 0=frame, 1=fish, 2=quantity.
         # Quantities: x_px, y_px, angle, area.
@@ -171,6 +161,10 @@ class Tracker:
         self.frame_end      = min(self.frame_end-1, self.frame_end)
         self.set_frame(self.frame_start-1)
         
+        self.bgr   = np.empty( shape=(self.height,self.width), dtype=np.uint8 )
+        self.frame = FrameAnalyzer( shape=(self.height,self.width) ) 
+        self.frame.contrast_factor = self.bkgSub_options['contrast_factor']
+        
         
     def init_video_output(self):
         if self.save_video:
@@ -179,16 +173,15 @@ class Tracker:
             fourcc = cv2.VideoWriter_fourcc(*self.codec)
             self.out = cv2.VideoWriter( filename = self.output_video, 
                                         frameSize = (self.width,self.height), 
-                                        fourcc = fourcc, fps = self.fps, isColor = self.RGB )
+                                        fourcc = fourcc, fps = self.fps, isColor = True )
         else:
             self.out = None
 
     def init_tank_mask(self):
-        self.tank_mask = self.tank.create_mask((self.height,self.width))
-        self.tank_mask = cv2.bitwise_not(self.tank_mask)
-        self.tank_mask = np.stack([self.tank_mask]*3,axis=2) # create color channels
-        if not self.background2 is None:
-            self.background2 *= (255-self.tank_mask)/255
+        self.frame.mask = self.tank.create_mask((self.height,self.width))
+        self.frame.mask = cv2.bitwise_not(self.frame.mask)
+        if not self.frame.bkg2 is None:
+            self.frame.bkg2 *= (255-self.frame.mask)/255
 
 
     def init_all(self):
@@ -225,11 +218,10 @@ class Tracker:
 
     def get_next_frame(self):
         if self.cap.isOpened():
-            ret, self.frame = self.cap.read()
+            ret,self.bgr = self.cap.read()
+            self.frame.from_bgr(self.bgr)
             if ret == True:
                 self.frame_num += 1
-                if self.bkg_type=='dark':
-                    self.frame = 255-self.frame
                 return True
         return False
 
@@ -269,16 +261,15 @@ class Tracker:
         i_start    = max( 0, int(t_start*self.fps) )
         i_end      = int(t_end*self.fps) if t_end>0 else self.n_frames-1
         i_end      = min( self.n_frames-1, i_end )
+        count      = 0
+        self.frame.bkg = np.zeros( (self.height,self.width), dtype=np.float32 )
         training_frames = np.linspace(i_start, i_end, n_training, dtype=int)
-        self.get_next_frame()
-        self.background = np.zeros(self.frame.shape)
-        count = 0
         for i in training_frames:
             self.set_frame(i)
             if self.get_next_frame():
-                self.background += self.frame
-                count           += 1
-        self.background /= count
+                np.add(self.frame.bkg, self.frame.i8, out=self.frame.bkg)
+                count += 1
+        self.frame.bkg /= count
 
 
     def compute_secondary_background(self):
@@ -290,60 +281,22 @@ class Tracker:
         i_end      = int(t_end*self.fps) if t_end>0 else self.n_frames-1
         i_end      = min( self.n_frames-1, i_end )
         training_frames = np.linspace(i_start, i_end, n_training, dtype=int)
-        self.background2 = np.zeros_like(self.background)
-        count = 0
+        self.frame.bkg2 = np.zeros_like(self.frame.bkg)
+        count      = 0
         for i in training_frames:
             self.set_frame(i)
             if self.get_next_frame():
-                self.background2 += np.absolute(self.frame-self.background)
-                count            += 1
-        self.background2 = np.minimum(255, 
-                            self.background2*self.bkgSub_options['contrast_factor']/count)
+                self.frame.subtract_background(primary=True, secondary=False)
+                self.frame.bkg2 += self.frame.f32
+                count           += 1
+        self.frame.bkg2 *= self.bkgSub_options['secondary_factor'] / count
+        np.minimum(self.frame.bkg2, 255, out=self.frame.bkg2)
+        np.subtract(255, self.frame.bkg2, out=self.frame.bkg2)
 
-
-    def subtract_background(self):
-        if not self.background is None:
-            self.frame  = self.frame-self.background
-            self.frame *= self.bkgSub_options['contrast_factor']
-            self.frame  = np.absolute(self.frame)
-            self.frame  = np.minimum(255, self.frame)
-            self.frame  = (255 - np.minimum(255, self.frame)).astype(np.uint8)
-            
-    
-    def subtract_secondary_background(self):
-        if not self.background2 is None:
-            self.frame = np.minimum(255, self.frame 
-                           + self.background2 *self.bkgSub_options['secondary_factor']
-                           ).astype(np.uint8)
-
-
-    def init_live_preview(self):
-        if (self.live_preview):
-            create_named_window(self.preview_window)
-    
 
     def write_frame(self):
         if self.save_video:
-            return self.out.write(self.frame)
-
-        
-    def post_frame(self,delay=None):
-        if delay==None or delay<1:
-            delay = int(1000/self.fps)
-        if self.live_preview:
-            wname = self.preview_window
-            cv2.imshow(wname,self.frame)
-            k = wait_on_named_window(wname,delay)
-            if k==-2:
-                return 0
-            if k==space_key:
-                while True:
-                    k2 = wait_on_named_window(wname,delay)
-                    if k2==-2:
-                        return 0
-                    if k2==space_key:
-                        break
-        return 1
+            return self.out.write(self.bgr)
 
 
     def get_current_timestamp(self):
@@ -366,104 +319,36 @@ class Tracker:
         if b:
             if not os.path.exists(frames_dir):
                 os.mkdir(frames_dir)
-            cv2.imwrite(frames_path('1_raw.png'),self.frame)
-        self.subtract_background()
+            cv2.imwrite(frames_path('1_raw.png'),self.frame.i8)
+        self.frame.subtract_background(secondary=False)
         if b:
-            cv2.imwrite(frames_path('2a_bkg-subtracted.png'),self.frame)
-        self.subtract_secondary_background()
+            cv2.imwrite(frames_path('2a_bkg-subtracted.png'),self.frame.i8)
+        self.frame.subtract_background(primary=False)
         if b:
-            cv2.imwrite(frames_path('2b_bkg2-subtracted.png'),self.frame)
-        self.mask_tank()
-        self.detect_contours()
+            cv2.imwrite(frames_path('2b_bkg2-subtracted.png'),self.frame.i8)
+        self.frame.apply_mask()
+        self.frame.threshold(self.n_pix_avg, self.block_size, self.offset)
+        if b:
+            cv2.imwrite(frames_path('3_thresholded.png'),self.frame.i8)
+        for mtype,mval in self.morph:
+            self.frame.apply_morphological_transform(mtype,mval)
+        if b and len(self.morph)>0:
+            cv2.imwrite(frames_path('3b_morph-transformed.png'),self.frame.i8)
+        self.frame.detect_contours()
+        self.frame.analyze_contours( self.n_track, self.min_area, self.max_area, 
+                                     self.max_aspect, guess_front=self.tracked_frames()==1)
         self.connect_frames()
         if b:
             opt = self.video_output_options.copy()
-            opt.update(points=False,extra_points=False,directors=False)
+            opt.update(points=False, extra_points=False, directors=False, contours=True)
             self.draw(**opt)
-            cv2.imwrite(frames_path('3_contours.png'),self.frame)
-        if b:
+            cv2.imwrite(frames_path('4_contours.png'),self.bgr)
+        if b or self.save_video:
             self.draw(**self.video_output_options)
-            cv2.imwrite(frames_path('4_directors.png'),self.frame)
+        if b:
+            cv2.imwrite(frames_path('5_directors.png'),self.bgr)
         self.write_frame()
-        return self.post_frame(delay=1)
 
-
-    ############################
-    # Contour functions
-    ############################
-
-
-    def threshold_detect(self):
-        # blur and current image for smoother contours
-        blur = cv2.GaussianBlur(self.frame, (self.n_pix_avg, self.n_pix_avg), 0)
-        # convert to grayscale
-        gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
-        
-        if self.block_size>0:
-            self.thresh = cv2.adaptiveThreshold( gray, 
-                                                 maxValue = self.threshMax, 
-                                                 adaptiveMethod = self.adaptiveMethod,
-                                                 thresholdType = cv2.THRESH_BINARY_INV,
-                                                 blockSize = self.block_size, 
-                                                 C = self.offset )
-        else:
-            self.thresh = cv2.threshold( gray, maxValue = 255-self.offset, 
-                                         thresholdType = cv2.THRESH_BINARY_INV )
-
-    
-    def detect_contours(self):
-        self.threshold_detect()
-        
-        # Morphological preprocessing.
-#        cv2.imwrite(os.path.join(self.output_dir,f'frames/{self.frame_num}-2b_thresh0.png'),self.thresh)
-        for i,(t,k) in enumerate(self.morph):
-            self.thresh = cv2.morphologyEx(self.thresh,t,k)
-#            cv2.imwrite(os.path.join(self.output_dir,f'frames/{self.frame_num}-2b_thresh{i+1}.png'),self.thresh)
-        
-        # The [-2:] makes this work with openCV versions 3 and 4.
-        self.contours, hierarchy = cv2.findContours( self.thresh, 
-                                                     cv2.RETR_TREE, 
-                                                     cv2.CHAIN_APPROX_SIMPLE )[-2:]
-        
-        self.new = []
-        if self.tracked_frames()==1:
-            self.cimg = np.zeros(self.frame.shape[:2])
-        for i,c in enumerate(self.contours):
-            M = cv2.moments(c)
-            # If area is valid, proceed with contour analysis.
-            area = M['m00']
-            if area>0 and self.min_area<=area<=self.max_area:
-                x     = M['m10'] / area
-                y     = M['m01'] / area
-                theta = 0.5 * np.arctan2(2*M['mu11'], M['mu20']-M['mu02'])
-                mu    = np.array([[M['mu20'],M['mu11']],[M['mu11'],M['mu02']]])/area
-                eVal,eVec = la.eigh(mu)
-#                theta = np.arctan2(eVec[1,1],eVec[1,0])
-                aspect = np.sqrt(eVal[1]/eVal[0])
-                # At the beginning, use skewness to guess front/back.
-                if self.tracked_frames()==1:
-                    cv2.drawContours(self.cimg, [c], 0, color=i, thickness=-1)
-                    Y,X = np.nonzero(self.cimg==i)
-                    # TODO: Try using width of the fish in the front half vs rear half instead
-                    # of the skew along the long axis. Find out which one is more robust.
-                    U = (X-x)*np.cos(theta)+(Y-y)*np.sin(theta)
-                    if skew(U)>0:
-                        theta += np.pi
-                if aspect<=self.max_aspect:
-                    M['valid'] = True
-                    self.new.append([x,y,theta,area,aspect])
-                    continue
-            self.contours[i] = None
-        for i in range(len(self.new),self.n_track):
-            self.new.append([np.nan]*5)
-        self.new = np.array(self.new,dtype=np.float)
-        self.contours = [ c for c in self.contours if not (c is None) ]
-        
-        # Rank contours from most likely to least likely to be a match.
-        I = self.rank_matches(self.new)
-        self.new = self.new[I]
-        self.contours = [ self.contours[i] for i in I if i<len(self.contours) ]
-        
 
     #############################
     # Frame-to-frame functions
@@ -509,6 +394,12 @@ class Tracker:
     # Use information from past frames to identify the contour corresponding
     # to each fish in the current frame.
     def connect_frames(self):
+        self.new = self.frame.coord
+        # Rank contours from most likely to least likely to be a match.
+        I = self.rank_matches(self.new)
+        self.new = self.new[I]
+        self.frame.contours = [ self.frame.contours[i] for i in I if i<len(self.frame.contours) ]
+
         # If there is no previous frame, use the n_track best contours.
         # If there aren't enough contours, fill with NaN.
         if len(self.data) == 0:
@@ -554,21 +445,6 @@ class Tracker:
 #            self.new[self.n_ind:self.n_track] = self.new[self.n_ind:][In2[:self.n_extra]]
 #            self.new = self.new[:self.n_track]
             
-            
-#            if self.frame_num==47:
-#                with np.printoptions(precision=1,suppress=True):
-#                    print('\ncoord_pred')
-#                    print(coord_pred)
-#                    print('\ncoord_new')
-#                    print(coord_new)
-#                    print('\nd')
-#                    print(d)
-#                    print('\nI0,In,Ie')
-#                    print(Io,In,Ie)
-#                    print('\nself.new')
-#                    print(self.new[:,[0,1,3]])
-            
-            
             # TODO: When a fish is missing use its last known position or some prediction 
             # based on it. Caveat: if the last known position is old, try to match recently
             # valid objects first.
@@ -603,24 +479,6 @@ class Tracker:
     
         
     ############################
-    # Masking functions
-    ############################
-    
-        
-    def mask_tank(self):
-        self.frame = cv2.bitwise_or(self.frame, self.tank_mask)
-
-
-#    def mask_contours(self):
-#        self.contour_masks = []
-#        # add contour areas to mask
-#        for i in range(len(self.contours)):
-#            mask = np.zeros_like(self.frame, dtype=bool)
-#            cv2.drawContours(mask, self.contours, i, 1, -1)
-#            self.contour_masks.append(mask)
-
-
-    ############################
     # Drawing functions
     ############################
 
@@ -653,21 +511,20 @@ class Tracker:
 
     
     def draw_tstamp(self):
-        color = (0,0,0) if self.RGB else 0
+        color = (0,0,0)
         font  = cv2.FONT_HERSHEY_SCRIPT_SIMPLEX
         t_str = self.get_current_timestamp()
-        cv2.putText(self.frame, t_str, (5,30), font, 1, color, 2)
+        cv2.putText(self.bgr, t_str, (5,30), font, 1, color, 2)
 
     
     def draw_tank(self, tank):
-        color = (0,0,0) if self.RGB else 0
-        self.tank.draw_outline(self.frame,color=color,thickness=1)
+        self.tank.draw_outline(self.bgr, color=(0,0,0), thickness=1)
 
     
     # Draw every contour.
     def draw_contours(self,contour_color=(0,0,255), contour_thickness=1):
-        color = contour_color if self.RGB else 0
-        cv2.drawContours(self.frame, self.contours, -1, color, int(contour_thickness))
+        color = contour_color
+        cv2.drawContours(self.bgr, self.frame.contours, -1, color, int(contour_thickness))
 
 
     # Draw center of each individual as a dot.
@@ -676,8 +533,8 @@ class Tracker:
         for i,(x,y) in enumerate(XY):
             if not (np.isnan(x) or np.isnan(y)):
                 x,y = int(x),int(y)
-                color = self.colors[i%len(self.colors)] if self.RGB else 0
-                cv2.circle(self.frame, (x,y), 3, color, -1, cv2.LINE_AA)
+                color = self.colors[i%len(self.colors)]
+                cv2.circle(self.bgr, (x,y), 3, color, -1, cv2.LINE_AA)
 
 
     # Draw orientation of each individual as an arrow.
@@ -687,9 +544,9 @@ class Tracker:
         U  = arrow_size/2*np.array([np.cos(Th),np.sin(Th)]).T
         for i in range(self.n_ind):
             if not np.isnan(XY[i]).any():
-                color = self.colors[i%len(self.colors)] if self.RGB else 255
+                color = self.colors[i%len(self.colors)]
                 (x1,y1),(x2,y2) = (XY[i]-U[i]).astype(int),(XY[i]+U[i]).astype(int)
-                cv2.arrowedLine(self.frame, (x1,y1), (x2,y2), color=color, 
+                cv2.arrowedLine(self.bgr, (x1,y1), (x2,y2), color=color, 
                                 thickness=2, tipLength=0.3)
 
 
@@ -699,9 +556,9 @@ class Tracker:
         for i,(x,y) in enumerate(XY):
             if not (np.isnan(x) or np.isnan(y)):
                 x,y = int(x),int(y)
-                color = self.colors[(i+self.n_ind)%len(self.colors)] if self.RGB else 0
-                cv2.line(self.frame, (x-size,y-size), (x+size,y+size) , color, 2)
-                cv2.line(self.frame, (x-size,y+size), (x+size,y-size) , color, 2)
+                color = self.colors[(i+self.n_ind)%len(self.colors)]
+                cv2.line(self.bgr, (x-size,y-size), (x+size,y+size) , color, 2)
+                cv2.line(self.bgr, (x-size,y+size), (x+size,y-size) , color, 2)
         
         
     ############################
@@ -718,8 +575,7 @@ class Tracker:
     def save_settings(self, fname = None):
         keys = [ 't_start', 't_end', 
                  'n_frames', 'frame_start', 'frame_end', 'frame_num', 
-                 'bkgSub_options', 'n_pix_avg', 'block_size', 
-                 'offset', 'threshMax', 'adaptiveMethod', 'bkg_type', 
+                 'bkgSub_options', 'n_pix_avg', 'block_size', 'offset', 
                  'min_area', 'max_area', 'ideal_area', 'reversal_threshold', 
                  'significant_displacement' ]
         if fname == None:
@@ -737,4 +593,4 @@ class Tracker:
 
 
 # Remaining variables (not in settings or trial):
-# keys = [ 'trial_file', 'colors', 'cap', 'width', 'height', 'RGB', 'live_preview', 'preview_window', 'codec', 'output_video', 'out', 'tank_file', 'background', 'bkg_file', 'bkg_img_file', 'thresh', 'contours', 'moments', 'frame', 'new' ]
+# keys = [ 'trial_file', 'colors', 'cap', 'width', 'height', 'RGB', 'preview_window', 'codec', 'output_video', 'out', 'tank_file', 'background', 'bkg_file', 'bkg_img_file', 'thresh', 'contours', 'moments', 'frame', 'new' ]

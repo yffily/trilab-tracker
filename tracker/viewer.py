@@ -6,52 +6,47 @@ import cv2
 import numpy as np
 import pandas as pd
 import datetime
+from frame import FrameAnalyzer
 import utils as utils
-from utils import create_named_window, wait_on_named_window
-#from tank import Tank
 from PyQt5 import QtCore, QtGui, QtWidgets, QtMultimediaWidgets
 import pyqtgraph
 from pyqtgraph.widgets.RawImageWidget import RawImageWidget
 
 
-input_dir    = '../output_data/SF_Sat_14dpf_GroupA_n5_2020-06-13-120445-0000'
 marker_size  = 5
 marker_lw    = 3
 arrow_size   = 10
 
+
 class Track:
 
     def __init__(self, input_dir):
-        background_file = os.path.join(input_dir,'background.npz')
-        self.background = next(iter(np.load(background_file).values()))
-        
-        background_file2 = os.path.join(input_dir,'background2.npz')
-        if os.path.exists(background_file2):
-            self.background2 = next(iter(np.load(background_file2).values()))
-        else:
-            self.background2 = None
-        
-        trial         = utils.load_pik(os.path.join(input_dir,'trial.pik'))
-        self.fps      = trial['fps']
-        self.frames   = trial['frame_list']
-        self.track    = trial['data']
-        self.n_ind    = trial['n_ind']
-        self.n_tracks = self.track.shape[1]
-        settings      = utils.load_txt(os.path.join(input_dir,'settings.txt'))
+        trial          = utils.load_pik(os.path.join(input_dir,'trial.pik'))
+        self.fps       = trial['fps']
+        self.frames    = trial['frame_list']
+        self.track     = trial['data']
+        self.n_ind     = trial['n_ind']
+        self.n_tracks  = self.track.shape[1]
+        settings       = utils.load_txt(os.path.join(input_dir,'settings.txt'))
         bkgSub_options = eval(settings['bkgSub_options'])
-        self.contrast_factor = bkgSub_options['contrast_factor']
         
-        
-        input_video   = os.path.join(input_dir,'raw.avi')
-        self.cap      = cv2.VideoCapture(input_video)
-        self.n_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        width         = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height        = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.frame    = np.empty(shape=(height,width,3), dtype=np.uint8)
-        self.frame_float = np.empty(shape=(height,width,3), dtype=float)
-        self.overlay = np.empty_like(self.frame)
+        input_video    = os.path.join(input_dir,'raw.avi')
+        self.cap       = cv2.VideoCapture(input_video)
+        self.n_frames  = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width          = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height         = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.frame     = FrameAnalyzer((height,width))
+        self.frame.contrast_factor = bkgSub_options['contrast_factor']
+        self.bgr       = np.empty(shape=(height,width,3), dtype=np.uint8)
+        self.overlay   = np.empty_like(self.bgr)
         self.read_frame()
-    
+        
+        bkg_file = os.path.join(input_dir,'background.npz')
+        self.frame.bkg  = next(iter(np.load(bkg_file).values()))
+        bkg2_file = os.path.join(input_dir,'background2.npz')
+        if os.path.exists(bkg2_file):
+            self.frame.bkg2 = next(iter(np.load(bkg2_file).values()))
+        
     def current_frame(self):
         return int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
     
@@ -65,28 +60,20 @@ class Track:
                 pass
             else:
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES,i-1)
-        ret, self.frame = self.cap.read()
+        ret,self.bgr = self.cap.read()
+        self.frame.from_bgr(self.bgr)
         return ret
     
-    def subtract_background(self):
-        self.frame_float = np.absolute(self.contrast_factor*(self.frame-self.background))
-        self.frame_float = np.minimum(255, self.frame_float)
-        self.frame  = (255 - np.minimum(255, self.frame_float.astype(np.uint8)))
-    
-    def subtract_secondary_background(self):
-        if not self.background2 is None:
-            self.frame = np.minimum(255,self.frame+self.background2).astype(np.uint8)
-
     def color(self, i):
         return utils.color_list[i%len(utils.color_list)]
 
-    def draw_track(self, i, track_length, show_fish=True, show_extra=True, alpha=1):
+    def draw_track(self, i, track_length, show_fish=True, show_extra=True):
         if not (track_length>0 or show_fish):
-            return
-        self.overlay.fill(0)
+            return False
         l = np.searchsorted(self.frames,i)
         if not (l<len(self.frames) and self.frames[l]==i):
-            return
+            return False
+        self.overlay.fill(0)
         for m in range(self.n_tracks):
             color = self.color(m)
             if track_length>0 and m<self.n_ind:
@@ -97,8 +84,6 @@ class Track:
             if (show_fish or show_extra) and not np.any(np.isnan(self.track[l,m,:2])):
                 x,y = self.track[l,m,:2].astype(np.int32)
                 if show_fish and m<self.n_ind:
-#                    cv2.circle(self.overlay, (x,y), cv2.LINE_AA, 
-#                                marker_size, color, marker_lw)
                     XY = self.track[l,m,:2]
                     Th = self.track[l,m,2]
                     U  = arrow_size*np.array([np.cos(Th),np.sin(Th)])
@@ -107,12 +92,10 @@ class Track:
                                     thickness=marker_lw, tipLength=0.5)
                 if show_extra and m>=self.n_ind:
                     xy = [(x+a*marker_size,y+b*marker_size) for a in [-1,1] for b in [-1,1]]
-                    cv2.line(self.frame, xy[0], xy[3], color, marker_lw)
-                    cv2.line(self.frame, xy[1], xy[2], color, marker_lw)
-        mask = np.any(self.overlay!=0,axis=2)
-        if np.sum(mask)>0:
-            self.frame[mask] = cv2.addWeighted(self.frame[mask], 1-alpha, 
-                                               self.overlay[mask], alpha, 0)
+                    cv2.line(self.overlay, xy[0], xy[3], color, marker_lw)
+                    cv2.line(self.overlay, xy[1], xy[2], color, marker_lw)
+        # Return True if an overlay was created.
+        return True
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -329,21 +312,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track.read_frame()
         else:
             self.track.read_frame(value)
-        if self.checkboxes['Subtract Background'].isChecked():
-            self.track.subtract_background()
-        if self.checkboxes['Subtract Secondary Background'].isChecked():
-            self.track.subtract_secondary_background()
-        self.track.draw_track( value, int(self.track.fps*self.track_length.value()), 
+        b1 = self.track.frame.subtract_background(  
+                               self.checkboxes['Subtract Background'].isChecked(), 
+                               self.checkboxes['Subtract Secondary Background'].isChecked() )
+        b2 = self.track.draw_track( value, int(self.track.fps*self.track_length.value()), 
                                show_fish=self.checkboxes['Show Fish'].isChecked(), 
-                               show_extra=self.checkboxes['Show Extra Objects'].isChecked(),
-                               alpha=self.alpha_slider.value()/100. )
-        self.video.setImage(self.cv2pg(self.track.frame))
-    
-    # Convert an openCV image matrix to a pyqtgraph image matrix. 
-    def cv2pg(self,img):
-        img = np.swapaxes(img,0,1) # Swap rows and columns.
-        img = np.flip(img,2) # Flip color channel order.
-        return img
+                               show_extra=self.checkboxes['Show Extra Objects'].isChecked() )
+        if b1 or b2:
+            self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
+        if b2 and self.alpha_slider.value()>0:
+            alpha = self.alpha_slider.value()/100.
+            mask = np.any(self.track.overlay>0,axis=2)
+            self.track.bgr[mask] = ( (1-alpha)*self.track.bgr[mask] + \
+                                     alpha*self.track.overlay[mask] ).astype(np.uint8)
+        # Convert from openCV image matrix to pyqtgraph image matrix then show on screen.
+        self.track.bgr = np.swapaxes(self.track.bgr, 0, 1) # Swap rows and columns.
+        self.track.bgr = np.flip(self.track.bgr, 2) # Flip color channel order.
+        self.video.setImage(self.track.bgr)
     
     def track_length_action(self,value):
         self.redraw()

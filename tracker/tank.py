@@ -51,7 +51,7 @@ class Tank:
     #########################
     
     
-    def locate_from_video(self,fvideo,i_frame=None):
+    def locate_from_video(self, fvideo, i_frame=None):
         # Open video.
         cap = cv2.VideoCapture(fvideo)
         if not cap.isOpened():
@@ -73,8 +73,10 @@ class Tank:
         return self.locate(frame)
         
 
-    def locate(self,img):
+    def locate(self, img):
         self.raw_frame = img.copy()
+        if len(self.raw_frame.shape)==2:
+            self.raw_frame = np.dstack([self.raw_frame,self.raw_frame,self.raw_frame])
         self.frame = self.raw_frame.copy()
         # Wait for user to click on the edge three times.
         self.wname = create_named_window(f'[Locate tank] One point for color region, two for rectangle, three for circle, more for polygon. Press space to accept, esc to cancel.')
@@ -193,8 +195,6 @@ class Tank:
 
     def calculate_color_region(self,tresh=None):
         x,y       = self.points[0]
-#        img       = cv2.cvtColor(self.raw_frame,cv2.COLOR_BGR2HSV)
-#        img       = self.raw_frame
         img       = cv2.cvtColor(self.raw_frame, cv2.COLOR_BGR2GRAY)
         ref       = img[y,x].astype(int)
         
@@ -251,10 +251,10 @@ class Tank:
 
     def create_mask(self,shape):
         if len(self.points)==0:
-            return np.full(shape=shape[:2],fill_value=255,dtype=np.uint8)
+            return np.full(shape=shape[:2], fill_value=255, dtype=np.uint8)
         mask = np.zeros(shape=shape[:2],dtype=np.uint8)
         if len(self.points)==1:
-            cv2.drawContours(mask,[self.contour],-1,255,-1)
+            cv2.drawContours(mask, [self.contour], -1, 255, -1)
         elif len(self.points)==2:
             cv2.rectangle(mask, self.points[0], self.points[1], 255, -1)
         elif len(self.points)==3:
@@ -264,3 +264,4 @@ class Tank:
             points = np.array(self.points).reshape((1,-1,2))
             cv2.fillPoly(mask, points, 255, 1)
         return mask
+
