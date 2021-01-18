@@ -133,7 +133,7 @@ class Tracker:
             self.compute_secondary_background()
             self.save_background(self.bkg_file2, self.frame.bkg2)
             cv2.imwrite(self.bkg_img_file2, 255-self.frame.bkg2)
-
+        self.frame.bkg2 *= self.bkgSub_options['secondary_factor']
 
     def init_tracking_data_structure(self):
         # The output of the tracking is stored in a numpy array.
@@ -289,7 +289,7 @@ class Tracker:
                 self.frame.subtract_background(primary=True, secondary=False)
                 self.frame.bkg2 += self.frame.f32
                 count           += 1
-        self.frame.bkg2 *= self.bkgSub_options['secondary_factor'] / count
+        self.frame.bkg2 /= count
         np.minimum(self.frame.bkg2, 255, out=self.frame.bkg2)
         np.subtract(255, self.frame.bkg2, out=self.frame.bkg2)
 
