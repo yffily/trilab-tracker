@@ -42,10 +42,12 @@ class FrameAnalyzer:
         else:
             return False
 
+    def blur(self, n_blur):
+        cv2.GaussianBlur(self.i8, (n_blur,n_blur), 0, dst=self.i8)
+        
     # We assume the objects to detect are darker than the background.
     # If not invert the image right after reading it and converting to grayscale.
-    def threshold(self, n_blur, block_size, offset):
-        cv2.GaussianBlur(self.i8, (n_blur,n_blur), 0, dst=self.i8)
+    def threshold(self, block_size, offset):
 #        cv2.threshold( self.i8, 255-2*offset, 255, cv2.THRESH_BINARY, dst=self.i8 )
         cv2.adaptiveThreshold( self.i8, maxValue=255, 
                                adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C,

@@ -26,12 +26,11 @@ class Tracker:
     
     def __init__(self, input_video, output_dir, n_ind, 
                  t_start = 0, t_end = -1,  
-                 n_pixel_blur = 3, block_size = 15, threshold_offset = 13, 
+                 n_blur = 3, block_size = 15, threshold_offset = 13, 
                  min_area = 20, max_area = 400, ideal_area = None, 
                  max_aspect = 10, ideal_aspect = None, area_penalty = 1, 
                  n_extra=1, morph_transform = [], 
                  reversal_threshold = None, significant_displacement = None, 
-                 adaptiveMethod = 'gaussian', 
                  bkgSub_options = dict( n_training_frames = 500, 
                                         t_start = 0, t_end = -1,
                                         contrast_factor = 4,
@@ -68,7 +67,7 @@ class Tracker:
         self.bkgSub_options = bkgSub_options
 
         # Tracking parameters.
-        self.n_pix_avg      = n_pixel_blur
+        self.n_blur         = n_blur
         self.thresh         = []
         self.block_size     = block_size
         self.offset         = threshold_offset
@@ -327,7 +326,8 @@ class Tracker:
         if b:
             cv2.imwrite(frames_path('2b_bkg2-subtracted.png'),self.frame.i8)
         self.frame.apply_mask()
-        self.frame.threshold(self.n_pix_avg, self.block_size, self.offset)
+        self.frame.blur(self.n_blur)
+        self.frame.threshold(self.block_size, self.offset)
         if b:
             cv2.imwrite(frames_path('3_thresholded.png'),self.frame.i8)
         for mtype,mval in self.morph:
@@ -573,15 +573,19 @@ class Tracker:
     
 
     def save_settings(self, fname = None):
-        keys = [ 't_start', 't_end', 
+        keys = [ # 'input_video', 'output_dir', 
+                 'n_ind', 'n_extra', 
+                 't_start', 't_end', 
                  'n_frames', 'frame_start', 'frame_end', 'frame_num', 
-                 'bkgSub_options', 'n_pix_avg', 'block_size', 'offset', 
-                 'min_area', 'max_area', 'ideal_area', 'reversal_threshold', 
-                 'significant_displacement' ]
+                 'n_blur', 'block_size', 'offset', 
+                 'min_area', 'max_area', 'ideal_area', 
+                 'max_aspect', 'ideal_aspect', 'area_penalty', 
+                 'reversal_threshold', 'significant_displacement', 
+                 'bkgSub_options' ]
         if fname == None:
             fname = self.settings_file
         save_txt( fname, { k:self.__dict__[k] for k in keys if k in self.__dict__.keys() } )
-            
+    
 
     def save_trial(self, fname = None):
         D = { k:self.__dict__[k] for k in [ 'input_video', 'output_dir', 'n_ind', 'n_extra', 'fps', 'data', 'frame_list' ] }

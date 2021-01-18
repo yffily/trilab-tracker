@@ -6,16 +6,19 @@ import cv2
 import numpy as np
 import pandas as pd
 import datetime
-from frame import FrameAnalyzer
-import utils as utils
+from tracker import utils
+from tracker.frame import FrameAnalyzer
+from tracker.tank import Tank
 from PyQt5 import QtCore, QtGui, QtWidgets, QtMultimediaWidgets
 import pyqtgraph
 from pyqtgraph.widgets.RawImageWidget import RawImageWidget
 
 
-marker_size  = 5
-marker_lw    = 3
-arrow_size   = 10
+marker_size   = 5
+marker_lw     = 3
+arrow_size    = 10
+contour_width = 2
+contour_color = (0,255,0) # bgr
 
 
 class Track:
@@ -27,8 +30,11 @@ class Track:
         self.track     = trial['data']
         self.n_ind     = trial['n_ind']
         self.n_tracks  = self.track.shape[1]
-        settings       = utils.load_txt(os.path.join(input_dir,'settings.txt'))
-        bkgSub_options = eval(settings['bkgSub_options'])
+        
+        self.settings  = utils.load_txt(os.path.join(input_dir,'settings.txt'))
+        for k,v in self.settings.items():
+            self.settings[k] = eval(v)
+#        self.settings['bkgSub_options'] = eval(self.settings['bkgSub_options'])
         
         input_video    = os.path.join(input_dir,'raw.avi')
         self.cap       = cv2.VideoCapture(input_video)
@@ -36,10 +42,16 @@ class Track:
         width          = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height         = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.frame     = FrameAnalyzer((height,width))
-        self.frame.contrast_factor = bkgSub_options['contrast_factor']
+        self.frame.contrast_factor = self.settings['bkgSub_options']['contrast_factor']
         self.bgr       = np.empty(shape=(height,width,3), dtype=np.uint8)
         self.overlay   = np.empty_like(self.bgr)
         self.read_frame()
+        
+#        tank           = utils.load_pik(os.path.join(input_dir,'tank.pik'))
+        tank           = Tank()
+        tank.load(os.path.join(input_dir,'tank.pik'))
+        self.frame.mask = tank.create_mask((height,width))
+        self.frame.mask = cv2.bitwise_not(self.frame.mask)
         
         bkg_file = os.path.join(input_dir,'background.npz')
         self.frame.bkg  = next(iter(np.load(bkg_file).values()))
@@ -67,13 +79,17 @@ class Track:
     def color(self, i):
         return utils.color_list[i%len(utils.color_list)]
 
-    def draw_track(self, i, track_length, show_fish=True, show_extra=True):
-        if not (track_length>0 or show_fish):
-            return False
+    def draw(self, i, track_length, show_fish=True, show_extra=True, show_contours=False):
+        has_overlay = False
+        self.overlay.fill(0)
+        if show_contours:
+            cv2.drawContours(self.overlay, self.frame.contours, -1, contour_color, contour_width)
+            has_overlay = True
+        if not (track_length>0 or show_fish or show_extra):
+            return has_overlay
         l = np.searchsorted(self.frames,i)
         if not (l<len(self.frames) and self.frames[l]==i):
-            return False
-        self.overlay.fill(0)
+            return has_overlay
         for m in range(self.n_tracks):
             color = self.color(m)
             if track_length>0 and m<self.n_ind:
@@ -81,6 +97,7 @@ class Track:
                 points = points[~np.any(np.isnan(points),axis=1)]
                 points = points.astype(np.int32).reshape((-1,1,2))
                 cv2.polylines(self.overlay, [points], False, color, 1)
+                has_overlay = True
             if (show_fish or show_extra) and not np.any(np.isnan(self.track[l,m,:2])):
                 x,y = self.track[l,m,:2].astype(np.int32)
                 if show_fish and m<self.n_ind:
@@ -88,14 +105,16 @@ class Track:
                     Th = self.track[l,m,2]
                     U  = arrow_size*np.array([np.cos(Th),np.sin(Th)])
                     (x1,y1),(x2,y2) = (XY-U).astype(int),(XY+U).astype(int)
-                    cv2.arrowedLine(self.overlay, (x1,y1), (x2,y2), color=color, 
-                                    thickness=marker_lw, tipLength=0.5)
+                    cv2.arrowedLine( self.overlay, (x1,y1), (x2,y2), color=color, 
+                                     thickness=marker_lw, tipLength=0.5 )
+                    has_overlay = True
                 if show_extra and m>=self.n_ind:
                     xy = [(x+a*marker_size,y+b*marker_size) for a in [-1,1] for b in [-1,1]]
                     cv2.line(self.overlay, xy[0], xy[3], color, marker_lw)
                     cv2.line(self.overlay, xy[1], xy[2], color, marker_lw)
+                    has_overlay = True
         # Return True if an overlay was created.
-        return True
+        return has_overlay
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -119,7 +138,8 @@ class MainWindow(QtWidgets.QMainWindow):
         
         tabs = { 'View':QtWidgets.QVBoxLayout(), 'Fix':QtWidgets.QVBoxLayout() }
         for k in tabs.keys():
-#            tabs[k].addWidget(QtWidgets.QLabel('Legend:'))
+            left   = QtWidgets.QVBoxLayout()
+            right  = QtWidgets.QVBoxLayout()
             for i in range(self.track.n_tracks):
                 row    = QtWidgets.QHBoxLayout()
                 label  = QtWidgets.QLabel()
@@ -131,12 +151,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 label  = QtWidgets.QLabel(text=text)
                 row.addWidget(label)
                 row.addStretch(1)
-                tabs[k].addLayout(row)
+                if i<self.track.n_tracks/2:
+                    left.addLayout(row)
+                else:
+                    right.addLayout(row)
+            right.addStretch(1)
+            legend = QtWidgets.QHBoxLayout()
+            legend.addLayout(left)
+            legend.addLayout(right)
+#            legend.addStretch(1)
+            tabs[k].addLayout(legend)
         tabs['View'].addWidget(QtWidgets.QLabel(' '))
-#        tabs['View'].addWidget(QtWidgets.QLabel('Viewing Options:'))
         self.checkboxes = {}
-        for k in ['Subtract Background', 'Subtract Secondary Background', 
-                   'Show Fish', 'Show Extra Objects']:
+        for k in [ 'Subtract Background', 'Subtract Secondary Background', 'Apply Tank Mask', 
+                   'Show Contours', 'Show Fish', 'Show Extra Objects', 'Show Track' ]:
             self.checkboxes[k] = QtWidgets.QCheckBox(k)
             self.checkboxes[k].stateChanged.connect(self.redraw)
             tabs['View'].addWidget(self.checkboxes[k])
@@ -150,7 +178,6 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs['View'].addLayout(row)
         
         tabs['View'].addWidget(QtWidgets.QLabel(' '))
-#        tabs['View'].addWidget(QtWidgets.QLabel('Playback Options:'))
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel('Play speed (frames per step):'))
         self.frame_skip = QtWidgets.QSpinBox()
@@ -246,6 +273,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.alpha_slider.setValue(50) # Go to beginning of video.
         self.checkboxes['Show Fish'].setChecked(True)
         self.checkboxes['Show Extra Objects'].setChecked(True)
+        self.checkboxes['Show Track'].setChecked(True)
         self.track_length.setValue(10)
         self.frame_skip.setValue(5)
 #        self.redraw()
@@ -315,12 +343,31 @@ class MainWindow(QtWidgets.QMainWindow):
         b1 = self.track.frame.subtract_background(  
                                self.checkboxes['Subtract Background'].isChecked(), 
                                self.checkboxes['Subtract Secondary Background'].isChecked() )
-        b2 = self.track.draw_track( value, int(self.track.fps*self.track_length.value()), 
-                               show_fish=self.checkboxes['Show Fish'].isChecked(), 
-                               show_extra=self.checkboxes['Show Extra Objects'].isChecked() )
-        if b1 or b2:
+        
+        b2 = self.checkboxes['Apply Tank Mask'].isChecked()
+        if b2:
+            self.track.frame.apply_mask()
+        b3 = self.checkboxes['Show Contours'].isChecked()
+        if b3:
+            # Stash the frame to allow viewing contours over non-thresholded frame.
+            self.track.bgr[:,:,0] = self.track.frame.i8
+            s = self.track.settings
+            self.track.frame.blur(s['n_blur'])
+            self.track.frame.threshold(s['block_size'], s['offset'])
+            self.track.frame.detect_contours()
+            self.track.frame.analyze_contours( self.track.n_tracks, 
+                                         s['min_area'], s['max_area'], s['max_aspect'])
+            self.track.frame.i8[...] = self.track.bgr[:,:,0]
+        track_length = int(self.track.fps*self.track_length.value()) if \
+                         self.checkboxes['Show Track'].isChecked() else 0
+        b4 = self.track.draw( value, track_length, 
+                              show_fish=self.checkboxes['Show Fish'].isChecked(), 
+                              show_extra=self.checkboxes['Show Extra Objects'].isChecked(),
+                              show_contours=self.checkboxes['Show Contours'].isChecked() )
+        if b1 or b2 or b3 or b4:
             self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
-        if b2 and self.alpha_slider.value()>0:
+        
+        if b4 and self.alpha_slider.value()>0:
             alpha = self.alpha_slider.value()/100.
             mask = np.any(self.track.overlay>0,axis=2)
             self.track.bgr[mask] = ( (1-alpha)*self.track.bgr[mask] + \
