@@ -120,8 +120,6 @@ class Tracker:
         self.bkg_img_file = os.path.join(self.output_dir,'background.png')
         self.frame.bkg    = self.load_background(self.bkg_file)
         if self.frame.bkg is None:
-            if not hasattr(self,'cap'):
-                self.init_video_input()
             self.compute_background()
             self.save_background(self.bkg_file,self.frame.bkg)
             cv2.imwrite(self.bkg_img_file,self.frame.bkg)
@@ -134,8 +132,9 @@ class Tracker:
         if self.frame.bkg2 is None:
             self.compute_secondary_background()
             self.save_background(self.bkg_file2, self.frame.bkg2)
-            cv2.imwrite(self.bkg_img_file2, 255-self.frame.bkg2)
-        self.frame.bkg2 *= self.bkgSub_options['secondary_factor']
+        cv2.imwrite(self.bkg_img_file2, 255-self.frame.bkg2)
+        self.frame.bkg2 *= self.bkgSub_options['secondary_factor'] * self.bkgSub_options['contrast_factor']
+
 
     def init_tracking_data_structure(self):
         # The output of the tracking is stored in a numpy array.
@@ -159,8 +158,9 @@ class Tracker:
         self.height   = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
         self.frame_start    = max(0, int(self.t_start*self.fps))
-        self.frame_end      = int(self.t_end*self.fps) if self.t_end>0 else self.n_frames-1
-        self.frame_end      = min(self.frame_end-1, self.frame_end)
+        self.frame_end      = int(self.t_end*self.fps)
+        if self.t_end<=0 or self.frame_end>self.n_frames:
+            self.frame_end = self.n_frames
         self.set_frame(self.frame_start-1)
         
         self.bgr   = np.empty( shape=(self.height,self.width), dtype=np.uint8 )
@@ -180,9 +180,6 @@ class Tracker:
 
     def init_tank_mask(self):
         self.frame.mask = self.tank.create_mask((self.height,self.width))
-        self.frame.mask = cv2.bitwise_not(self.frame.mask)
-        if not self.frame.bkg2 is None:
-            self.frame.bkg2 *= (255-self.frame.mask)/255
 
 
     def init_all(self):
@@ -222,8 +219,8 @@ class Tracker:
     def get_next_frame(self):
         if self.cap.isOpened():
             ret,self.bgr = self.cap.read()
-            self.frame.from_bgr(self.bgr)
             if ret == True:
+                self.frame.from_bgr(self.bgr)
                 self.frame_num += 1
                 return True
         return False
@@ -284,7 +281,9 @@ class Tracker:
         i_end      = int(t_end*self.fps) if t_end>0 else self.n_frames-1
         i_end      = min( self.n_frames-1, i_end )
         training_frames = np.linspace(i_start, i_end, n_training, dtype=int)
-        self.frame.bkg2 = np.zeros_like(self.frame.bkg)
+        self.frame.bkg2 = np.zeros( (self.height,self.width), dtype=np.float32 )
+        contrast_factor = self.frame.contrast_factor
+        self.frame.contrast_factor = 1
         count      = 0
         for i in training_frames:
             self.set_frame(i)
@@ -293,8 +292,7 @@ class Tracker:
                 self.frame.bkg2 += self.frame.f32
                 count           += 1
         self.frame.bkg2 /= count
-        np.minimum(self.frame.bkg2, 255, out=self.frame.bkg2)
-        np.subtract(255, self.frame.bkg2, out=self.frame.bkg2)
+        self.frame.contrast_factor = contrast_factor
 
 
     def write_frame(self):
@@ -403,7 +401,6 @@ class Tracker:
         I = self.rank_matches(self.new)
         self.new = self.new[I]
         self.frame.contours = [ self.frame.contours[i] for i in I if i<len(self.frame.contours) ]
-
         # If there is no previous frame, use the n_track best contours.
         # If there aren't enough contours, fill with NaN.
         if len(self.data) == 0:

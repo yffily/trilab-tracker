@@ -20,7 +20,7 @@ class FrameAnalyzer:
         cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY, dst=self.i8)
     
     def apply_mask(self):
-        self.i8 = cv2.bitwise_or(self.i8, self.mask)
+        self.i8 = cv2.bitwise_and(self.i8, self.mask)
 
     def subtract_background(self, primary=True, secondary=True):
         b1 = primary and (not self.bkg is None)
@@ -30,12 +30,11 @@ class FrameAnalyzer:
             np.multiply(self.f32, self.contrast_factor, out=self.f32)
             np.absolute(self.f32, out=self.f32)
             np.minimum(self.f32, 255, out=self.f32)
-            np.subtract(255, self.f32, out=self.f32)
         elif b2:
             self.f32[...] = self.i8
         if b2:
-            np.add(self.f32, self.bkg2, out=self.f32)
-            np.minimum(255, self.f32, out=self.f32)
+            np.subtract(self.f32, self.bkg2, out=self.f32)
+            np.maximum(0, self.f32, out=self.f32)
         if b1 or b2:
             self.i8[...] = self.f32
             return True
@@ -48,11 +47,11 @@ class FrameAnalyzer:
     # We assume the objects to detect are darker than the background.
     # If not invert the image right after reading it and converting to grayscale.
     def threshold(self, block_size, offset):
-#        cv2.threshold( self.i8, 255-2*offset, 255, cv2.THRESH_BINARY, dst=self.i8 )
+#        cv2.threshold( self.i8, 2*offset, 255, cv2.THRESH_BINARY, dst=self.i8 )
         cv2.adaptiveThreshold( self.i8, maxValue=255, 
                                adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                thresholdType=cv2.THRESH_BINARY,
-                               blockSize=block_size, C=offset, dst=self.i8 )
+                               blockSize=block_size, C=-offset, dst=self.i8 )
         
     def apply_morphological_transform(self, mtype, mval):
             cv2.morphologyEx(self.i8, mtype, mval, dst=self.i8)

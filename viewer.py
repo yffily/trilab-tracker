@@ -34,7 +34,6 @@ class Track:
         self.settings  = utils.load_txt(os.path.join(input_dir,'settings.txt'))
         for k,v in self.settings.items():
             self.settings[k] = eval(v)
-#        self.settings['bkgSub_options'] = eval(self.settings['bkgSub_options'])
         
         input_video    = os.path.join(input_dir,'raw.avi')
         self.cap       = cv2.VideoCapture(input_video)
@@ -47,18 +46,18 @@ class Track:
         self.overlay   = np.empty_like(self.bgr)
         self.read_frame()
         
-#        tank           = utils.load_pik(os.path.join(input_dir,'tank.pik'))
         tank           = Tank()
         tank.load(os.path.join(input_dir,'tank.pik'))
         self.frame.mask = tank.create_mask((height,width))
-        self.frame.mask = cv2.bitwise_not(self.frame.mask)
         
         bkg_file = os.path.join(input_dir,'background.npz')
         self.frame.bkg  = next(iter(np.load(bkg_file).values()))
         bkg2_file = os.path.join(input_dir,'background2.npz')
         if os.path.exists(bkg2_file):
-            self.frame.bkg2 = next(iter(np.load(bkg2_file).values()))
-        
+            self.frame.bkg2  = next(iter(np.load(bkg2_file).values()))
+            self.frame.bkg2 *= self.settings['bkgSub_options']['secondary_factor'] * \
+                                  self.settings['bkgSub_options']['contrast_factor']
+
     def current_frame(self):
         return int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
     
@@ -258,8 +257,8 @@ class MainWindow(QtWidgets.QMainWindow):
         #--------------------
         # Shortcuts.
         
-        shortcuts  = { 'esc':quit, 'ctrl+q':quit, 'q':quit, 
-                       ' ':self.spacebar, 'f':self.toggle_fullscreen, 
+        shortcuts  = { 'esc':quit, 'ctrl+q':quit, 'q':quit, 'f5':self.reload, 
+                       ' ':self.spacebar, 'f':self.toggle_fullscreen,
                        'right':self.next_frame, 'left':self.previous_frame }
         for key,action in shortcuts.items():
             shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(key), self)
@@ -343,7 +342,6 @@ class MainWindow(QtWidgets.QMainWindow):
         b1 = self.track.frame.subtract_background(  
                                self.checkboxes['Subtract Background'].isChecked(), 
                                self.checkboxes['Subtract Secondary Background'].isChecked() )
-        
         b2 = self.checkboxes['Apply Tank Mask'].isChecked()
         if b2:
             self.track.frame.apply_mask()
@@ -366,7 +364,8 @@ class MainWindow(QtWidgets.QMainWindow):
                               show_contours=self.checkboxes['Show Contours'].isChecked() )
         if b1 or b2 or b3 or b4:
             self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
-        
+        if self.checkboxes['Subtract Background'].isChecked():
+            np.subtract(255, self.track.bgr, out=self.track.bgr)
         if b4 and self.alpha_slider.value()>0:
             alpha = self.alpha_slider.value()/100.
             mask = np.any(self.track.overlay>0,axis=2)
