@@ -70,16 +70,16 @@ class Tank:
         # Close video.
         cap.release()
         # Locate the tank.
-        return self.locate(frame)
+        return self.locate(frame, fvideo)
         
 
-    def locate(self, img):
+    def locate(self, img, wname='Locate tank'):
         self.raw_frame = img.copy()
         if len(self.raw_frame.shape)==2:
             self.raw_frame = np.dstack([self.raw_frame,self.raw_frame,self.raw_frame])
         self.frame = self.raw_frame.copy()
         # Wait for user to click on the edge three times.
-        self.wname = create_named_window(f'[Locate tank] One point for color region, two for rectangle, three for circle, more for polygon. Press space to accept, esc to cancel.')
+        self.wname = create_named_window(wname)
         self.point_dragged = None
         cv2.setMouseCallback(self.wname, self.process_mouse)
         cv2.imshow(self.wname,self.frame)

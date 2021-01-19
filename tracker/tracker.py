@@ -109,7 +109,8 @@ class Tracker:
                 self.tank.__dict__[k] = v
             b = (self.frame.bkg is None)
             if ( b and self.tank.locate_from_video(self.input_video) ) \
-                or ( (not b) and self.tank.locate(self.frame.bkg.astype(np.uint8)) ):
+                or ( (not b) and self.tank.locate(self.frame.bkg.astype(np.uint8), \
+                                                  self.input_video) ):
                 self.tank.save(self.tank_file)
                 self.tank.save_img(self.tank_img_file)
 
@@ -119,6 +120,8 @@ class Tracker:
         self.bkg_img_file = os.path.join(self.output_dir,'background.png')
         self.frame.bkg    = self.load_background(self.bkg_file)
         if self.frame.bkg is None:
+            if not hasattr(self,'cap'):
+                self.init_video_input()
             self.compute_background()
             self.save_background(self.bkg_file,self.frame.bkg)
             cv2.imwrite(self.bkg_img_file,self.frame.bkg)
@@ -173,8 +176,7 @@ class Tracker:
             self.out = cv2.VideoWriter( filename = self.output_video, 
                                         frameSize = (self.width,self.height), 
                                         fourcc = fourcc, fps = self.fps, isColor = True )
-        else:
-            self.out = None
+
 
     def init_tank_mask(self):
         self.frame.mask = self.tank.create_mask((self.height,self.width))
@@ -197,10 +199,12 @@ class Tracker:
 
 
     def release(self):
-        if 'cap' in self.__dict__.keys():
+        if hasattr(self,'cap'):
             self.cap.release()
-        if 'out' in self.__dict__.keys() and not self.out is None:
+            del self.cap
+        if hasattr(self,'out'):
             self.out.release()
+            del self.out
         cv2.destroyAllWindows()
         cv2.waitKey(1)
         logging.info(f'{parindent}Video capture released')
