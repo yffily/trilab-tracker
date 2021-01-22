@@ -398,9 +398,11 @@ class Tracker:
     def connect_frames(self):
         self.new = self.frame.coord
         # Rank contours from most likely to least likely to be a match.
+#        if len(self.data) == 0:
         I = self.rank_matches(self.new)
         self.new = self.new[I]
-        self.frame.contours = [ self.frame.contours[i] for i in I if i<len(self.frame.contours) ]
+        self.frame.contours = [ self.frame.contours[i] for i in \
+                                I if i<len(self.frame.contours) ]
         # If there is no previous frame, use the n_track best contours.
         # If there aren't enough contours, fill with NaN.
         if len(self.data) == 0:
@@ -427,24 +429,15 @@ class Tracker:
             coord_pred[I,2] *= self.area_penalty
             d[I]             = 1e4 + cdist(coord_pred[I],coord_new)
             d[np.isnan(d)]   = 1e8
-            
             # First look for matches for the previous frame's fish, then look for matches
             # for the previous frame's extra contours.
             # This is tricky to get right. Lost fish can get replaced with spurious 
             # contours which then get prioritized when the actual fish reappears.
-            Io,In = linear_sum_assignment(d[:self.n_ind,:])
-            self.new[:self.n_ind] = self.new[In]
-            Ie = np.array([ i for i in range(self.n_track) if i not in In ])
-            Io2,In2 = linear_sum_assignment(d[self.n_ind:,Ie])
-            self.new[self.n_ind:self.n_track] = self.new[Ie[In2]]
-            self.new = self.new[:self.n_track]
-#            # Alternative approach: Only use the best n_ind contours to look for matches
-#            # for the previous frame's fish.
-#            Io,In = linear_sum_assignment(d[:self.n_ind,:self.n_ind])
-#            self.new[:self.n_ind] = self.new[In]
-#            Io2,In2 = linear_sum_assignment(d[self.n_ind:,self.n_ind:])
-#            self.new[self.n_ind:self.n_track] = self.new[self.n_ind:][In2[:self.n_extra]]
-#            self.new = self.new[:self.n_track]
+            Io1,In1  = linear_sum_assignment(d[:self.n_ind,:])
+            Ie       = np.array([ i for i in range(self.n_track) if i not in In1 ])
+            Io2,In2  = linear_sum_assignment(d[self.n_ind:,Ie])
+            In       = np.concatenate([In1,Ie[In2]])
+            self.new = self.new[In]
             
             # TODO: When a fish is missing use its last known position or some prediction 
             # based on it. Caveat: if the last known position is old, try to match recently
