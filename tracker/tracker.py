@@ -350,6 +350,7 @@ class Tracker:
         if b:
             cv2.imwrite(frames_path('5_directors.png'),self.bgr)
         self.write_frame()
+        return True
 
 
     #############################

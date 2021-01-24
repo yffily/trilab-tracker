@@ -76,7 +76,8 @@ def create_named_window(name='preview window'):
 #    cv2.namedWindow(name,cv2.WINDOW_NORMAL)
     cv2.namedWindow(name,cv2.WINDOW_KEEPRATIO)
 #    cv2.resizeWindow(name,default_window_size[0],default_window_size[1])
-    cv2.resizeWindow(name,screen.width,screen.height)
+#    cv2.resizeWindow(name,screen.width,screen.height)
+    cv2.resizeWindow(name,int(0.9*screen.width),int(0.9*screen.height))
     cv2.moveWindow(name,screen.x,screen.y)
     return name
 
