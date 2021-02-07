@@ -416,7 +416,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.tab_widget.currentIndex()==0 and \
                     self.checkboxes['Threshold'].isChecked():
                 self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
-            if self.checkboxes['Subtract Background'].isChecked():
+            if self.tab_widget.currentIndex()==0 and \
+                    self.checkboxes['Subtract Background'].isChecked():
                 np.subtract(255, self.track.bgr, out=self.track.bgr)
         
         track_length = int(self.track.fps*self.tunables['Track length (s)'].value()) if \
