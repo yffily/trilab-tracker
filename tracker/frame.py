@@ -57,8 +57,13 @@ class FrameAnalyzer:
             cv2.morphologyEx(self.i8, mtype, mval, dst=self.i8)
         
     def detect_contours(self):
-        self.contours, hierarchy = cv2.findContours( self.i8, cv2.RETR_TREE, 
+#        self.contours, hierarchy = cv2.findContours( self.i8, cv2.RETR_TREE, 
+#                                                     cv2.CHAIN_APPROX_SIMPLE )[-2:]
+        self.contours, hierarchy = cv2.findContours( self.i8, cv2.RETR_EXTERNAL, 
                                                      cv2.CHAIN_APPROX_SIMPLE )[-2:]
+        # Restricting to outermost contours discards spots inside a fish, however
+        # sometimes the edge of the image is detected as a contour and fish contours
+        # get pushed to the second level in the hierarchy.
 
     def analyze_contours(self, n_track, min_area, max_area, max_aspect, guess_front=False):
         self.coord = []

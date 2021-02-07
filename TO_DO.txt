@@ -1,3 +1,4 @@
 
 - Fix aspect ratio of cv2 windows in Windows10.
 
+- Pick a third order moment to save at every time step (along with position, angle, area, and aspect ratio) to help identify the front of each fish in post-processing.

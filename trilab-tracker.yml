@@ -12,6 +12,7 @@ dependencies:
   - pyqtgraph
   - xlrd # read excel spreadsheets
   - openpyxl # write excel spreadsheets
+  - flatten-dict
   - pip:
     - opencv-python
 #    - opencv-contrib-python # Install instead of opencv-python. Contains extra features including extra background subtraction methods in submodule cv2.bgsegm. 

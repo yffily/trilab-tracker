@@ -12,6 +12,8 @@ from tracker.tank import Tank
 from PyQt5 import QtCore, QtGui, QtWidgets, QtMultimediaWidgets
 import pyqtgraph
 from pyqtgraph.widgets.RawImageWidget import RawImageWidget
+#import argparse
+import flatten_dict
 
 
 marker_size   = 5
@@ -34,6 +36,7 @@ class Track:
         self.settings  = utils.load_txt(os.path.join(input_dir,'settings.txt'))
         for k,v in self.settings.items():
             self.settings[k] = eval(v)
+        self.settings  = flatten_dict.flatten(self.settings,'dot')
         
         input_video    = os.path.join(input_dir,'raw.avi')
         self.cap       = cv2.VideoCapture(input_video)
@@ -41,7 +44,7 @@ class Track:
         width          = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height         = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.frame     = FrameAnalyzer((height,width))
-        self.frame.contrast_factor = self.settings['bkgSub_options']['contrast_factor']
+        self.frame.contrast_factor = self.settings['bkgSub_options.contrast_factor']
         self.bgr       = np.empty(shape=(height,width,3), dtype=np.uint8)
         self.overlay   = np.empty_like(self.bgr)
         self.read_frame()
@@ -54,9 +57,10 @@ class Track:
         self.frame.bkg  = next(iter(np.load(bkg_file).values()))
         bkg2_file = os.path.join(input_dir,'background2.npz')
         if os.path.exists(bkg2_file):
-            self.frame.bkg2  = next(iter(np.load(bkg2_file).values()))
-            self.frame.bkg2 *= self.settings['bkgSub_options']['secondary_factor'] * \
-                                  self.settings['bkgSub_options']['contrast_factor']
+            self.frame.bkg2_ = next(iter(np.load(bkg2_file).values()))
+            self.frame.bkg2  = self.frame.bkg2_.copy()
+            self.frame.bkg2 *= self.settings['bkgSub_options.secondary_factor'] * \
+                                  self.settings['bkgSub_options.contrast_factor']
 
     def current_frame(self):
         return int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
@@ -135,102 +139,152 @@ class MainWindow(QtWidgets.QMainWindow):
         #--------------------
         # Widgets.
         
-        tabs = { 'View':QtWidgets.QVBoxLayout(), 'Fix':QtWidgets.QVBoxLayout() }
-        for k in tabs.keys():
-            left   = QtWidgets.QVBoxLayout()
-            right  = QtWidgets.QVBoxLayout()
-            for i in range(self.track.n_tracks):
-                row    = QtWidgets.QHBoxLayout()
-                label  = QtWidgets.QLabel()
-                pixmap = QtGui.QPixmap(10,10)
-                pixmap.fill(QtGui.QColor(*self.track.color(i)[::-1]))
-                label.setPixmap(pixmap)
-                row.addWidget(label)
-                text = f'fish {i+1}' if i<self.track.n_ind else f'object {i+1}'
-                label  = QtWidgets.QLabel(text=text)
-                row.addWidget(label)
-                row.addStretch(1)
-                if i<self.track.n_tracks/2:
-                    left.addLayout(row)
-                else:
-                    right.addLayout(row)
-            right.addStretch(1)
-            legend = QtWidgets.QHBoxLayout()
-            legend.addLayout(left)
-            legend.addLayout(right)
-#            legend.addStretch(1)
-            tabs[k].addLayout(legend)
-        tabs['View'].addWidget(QtWidgets.QLabel(' '))
+        # Create widget to show current frame number.
+        self.clock = QtWidgets.QLabel()
+
+        # Create spinboxes.
+        self.tunables = {}
+        spins  = [ 'n_blur', 'block_size', 'offset', 'min_area', 'max_area', 
+                   'ideal_area', 'Read one frame in' ]
+        dspins = [ 'max_aspect', 'ideal_aspect', 'contrast_factor', 
+                   'secondary_factor', 'Track length (s)' ]
+        for k in spins+dspins:
+            self.tunables[k] = QtWidgets.QSpinBox() if k in spins \
+                                   else QtWidgets.QDoubleSpinBox()
+            self.tunables[k].setRange(0,1000)
+        self.tunables['Read one frame in'].setRange(-100,100)
+        self.reset_tunables()
+        
+        # Create checkboxes.
         self.checkboxes = {}
-        for k in [ 'Subtract Background', 'Subtract Secondary Background', 'Apply Tank Mask', 
-                   'Show Contours', 'Show Fish', 'Show Extra Objects', 'Show Track' ]:
+        for k in [ 'Subtract Background', 'Subtract Secondary Background', 
+                   'Apply Tank Mask', 'Threshold', 'Show Contours', 
+                   'Show Fish', 'Show Extra Objects', 'Show Track' ]:
             self.checkboxes[k] = QtWidgets.QCheckBox(k)
+        
+        # Create sliders.
+        self.sliders = {}
+        for k in [ 'frame', 'alpha' ]:
+            self.sliders[k] = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.sliders['frame'].setRange(1, self.track.n_frames)
+        self.sliders['alpha'].setRange(0, 100)
+        
+        # Create buttons.
+        self.buttons = {}
+        self.buttons['reset settings'] = QtWidgets.QPushButton('Reset')
+        self.buttons['play'] = QtWidgets.QPushButton('Play')
+        self.buttons['play'].setCheckable(True)
+        
+        # Create right panel tabs.
+        tabs = { 'Tune':QtWidgets.QVBoxLayout(), 
+                 'View':QtWidgets.QVBoxLayout(), 
+                 'Fix':QtWidgets.QVBoxLayout() }
+        self.tab_widget = QtWidgets.QTabWidget()
+        for k in tabs.keys():
+            tab = QtWidgets.QWidget()
+            tab.setLayout(tabs[k])
+            self.tab_widget.addTab(tab,k)
+        
+        # Connect widgets to appropriate actions.
+        self.tab_widget.currentChanged.connect(self.redraw)
+        for k in self.tunables.keys():
+            if k in ['contrast_factor', 'secondary_factor']:
+                self.tunables[k].valueChanged.connect(self.update_bkgSub)
+            self.tunables[k].valueChanged.connect(self.redraw)
+        for k in self.checkboxes.keys():
             self.checkboxes[k].stateChanged.connect(self.redraw)
-            tabs['View'].addWidget(self.checkboxes[k])
+        for k in self.sliders.keys():
+            self.sliders[k].valueChanged.connect(self.redraw)
+        self.buttons['reset settings'].clicked.connect(self.reset_tunables)
+        self.buttons['play'].clicked.connect(self.play_pause)
         
-        tabs['View'].addWidget(QtWidgets.QLabel(' '))
+        # Create fish legend as a layout.
+        left   = QtWidgets.QVBoxLayout()
+        right  = QtWidgets.QVBoxLayout()
+        for i in range(self.track.n_tracks):
+            row    = QtWidgets.QHBoxLayout()
+            label  = QtWidgets.QLabel()
+            pixmap = QtGui.QPixmap(10,10)
+            pixmap.fill(QtGui.QColor(*self.track.color(i)[::-1]))
+            label.setPixmap(pixmap)
+            row.addWidget(label)
+            text   = f'fish {i+1}' if i<self.track.n_ind else f'object {i+1}'
+            label  = QtWidgets.QLabel(text=text)
+            row.addWidget(label)
+            row.addStretch(1)
+            if i<self.track.n_tracks/2:
+                left.addLayout(row)
+            else:
+                right.addLayout(row)
+        right.addStretch(1)
+        legend = QtWidgets.QHBoxLayout()
+        legend.addLayout(left)
+        legend.addLayout(right)
+        
+        # Create a widget with a tunable's name and spinbox side-by-side.
+        def create_tunable_row(k):
+            row = QtWidgets.QHBoxLayout()
+            row.addWidget(QtWidgets.QLabel(k))
+            row.addWidget(self.tunables[k])
+            return row
+        
+        # Set up 'Tune' tab.
+        tab = tabs['Tune']
+        for k in [ 'Subtract Background', 'Subtract Secondary Background', 
+                   'Apply Tank Mask', 'Threshold', 'Show Contours' ]:
+            tab.addWidget(self.checkboxes[k])
+        for k in [ 'n_blur', 'block_size', 'offset', 'min_area', 'max_area', 
+                   'ideal_area', 'max_aspect', 'ideal_aspect', 
+                   'contrast_factor', 'secondary_factor' ]:
+            tab.addLayout(create_tunable_row(k))
+        tab.addWidget(self.buttons['reset settings'])
+        tab.addStretch(1)
+        
+        # Set up 'View' tab.
+        tab = tabs['View']
+        tab.addLayout(legend)
+        tab.addWidget(QtWidgets.QLabel(' '))
+        for k in [ 'Show Fish', 'Show Extra Objects', 'Show Track', 'Show Contours' ]:
+            tab.addWidget(self.checkboxes[k])
+        tab.addWidget(QtWidgets.QLabel(' '))
+        tab.addLayout(create_tunable_row('Track length (s)'))
+        tab.addLayout(create_tunable_row('Read one frame in'))
+        tab.addWidget(QtWidgets.QLabel(' '))
         row = QtWidgets.QHBoxLayout()
-        row.addWidget(QtWidgets.QLabel('Track length (seconds):'))
-        self.track_length = QtWidgets.QDoubleSpinBox()
-        self.track_length.valueChanged.connect(self.track_length_action)
-        row.addWidget(self.track_length)
-        tabs['View'].addLayout(row)
+        row.addWidget(QtWidgets.QLabel('Overlay transparency'))
+        row.addWidget(self.sliders['alpha'])
+        tab.addLayout(row)
+        tab.addStretch(1)
         
-        tabs['View'].addWidget(QtWidgets.QLabel(' '))
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(QtWidgets.QLabel('Play speed (frames per step):'))
-        self.frame_skip = QtWidgets.QSpinBox()
-        self.frame_skip.setRange(-100,100)
-        row.addWidget(self.frame_skip)
-        tabs['View'].addLayout(row)
-        
-        tabs['View'].addWidget(QtWidgets.QLabel(' '))
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(QtWidgets.QLabel('Overlay transparency:'))
-        self.alpha_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.alpha_slider.setRange(0,100)
-        self.alpha_slider.valueChanged.connect(self.redraw)
-        row.addWidget(self.alpha_slider)
-        tabs['View'].addLayout(row)
-        
-#        tabs['Fix'].addWidget(QtWidgets.QLabel(' '))
-#        tabs['Fix'].addWidget(QtWidgets.QLabel('Active Fish:'))
+        # Set up 'Fix' tab.
+        tab = tabs['Fix']
+#        tab.addLayout(legend)
+#        tab.addWidget(QtWidgets.QLabel(' '))
+#        tab.addWidget(QtWidgets.QLabel('Active Fish:'))
 #        self.active_fish = QtWidgets.QComboBox()
 #        for i in range(self.track.n_ind):
 #            self.active_fish.addItem(f'fish {i+1}')
-#        tabs['Fix'].addWidget(self.active_fish)
-        tabs['Fix'].addWidget(QtWidgets.QLabel(' '))
-        tabs['Fix'].addWidget(QtWidgets.QLabel('Not implemented yet.'))
-                
-        tab_widget = QtWidgets.QTabWidget()
-        for k in tabs.keys():
-            tabs[k].addStretch(1)
-            tab = QtWidgets.QWidget()
-            tab.setLayout(tabs[k])
-            tab_widget.addTab(tab,k)
+#        tab.addWidget(self.active_fish)
+#        tab.addWidget(QtWidgets.QLabel(' '))
+        tab.addWidget(QtWidgets.QLabel('Not implemented yet.'))
+        tab.addStretch(1)
         
-        self.frame_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.frame_slider.setMinimum(1)
-        self.frame_slider.setMaximum(self.track.n_frames)
-        self.frame_slider.valueChanged.connect(self.redraw)
+        #--------------------
+        # Window layout.
         
-        self.clock = QtWidgets.QLabel()
-        
-        self.play_button = QtWidgets.QPushButton('Play')
-        self.play_button.setCheckable(True)
-        self.play_button.clicked.connect(self.play_pause)
-        buttons_layout = QtWidgets.QHBoxLayout()
-        buttons_layout.addWidget(self.clock)
-        for button in [ self.play_button ]:
-            buttons_layout.addWidget(button)
-        
-        layout1 = QtWidgets.QHBoxLayout() # Video & right-side panel.
+        # Video & right-side panel.
+        layout1 = QtWidgets.QHBoxLayout()
         layout1.addWidget(self.video,2)
-        layout1.addWidget(tab_widget)
+        layout1.addWidget(self.tab_widget)
+        # Playback buttons.
+        layout2 = QtWidgets.QHBoxLayout()
+        layout2.addWidget(self.clock)
+        layout2.addWidget(self.buttons['play'])
+        # Final layout.
         layout  = QtWidgets.QVBoxLayout()
         layout.addLayout(layout1)
-        layout.addLayout(buttons_layout)
-        layout.addWidget(self.frame_slider)
+        layout.addLayout(layout2)
+        layout.addWidget(self.sliders['frame'])
         central = QtWidgets.QWidget()
         central.setLayout(layout)
         self.setCentralWidget(central)
@@ -267,15 +321,16 @@ class MainWindow(QtWidgets.QMainWindow):
         #--------------------
         # Starting options.
         
+        self.tab_widget.setCurrentIndex(1) # Start in 'View' tab.
         i = self.track.frames[0] if len(self.track.frames)>0 else 0
-        self.frame_slider.setValue(i) # Go to beginning of video.
-        self.alpha_slider.setValue(50) # Go to beginning of video.
+        self.sliders['frame'].setValue(i) # Go to beginning of video.
+        self.sliders['alpha'].setValue(50) # Go to beginning of video.
         self.checkboxes['Show Fish'].setChecked(True)
         self.checkboxes['Show Extra Objects'].setChecked(True)
         self.checkboxes['Show Track'].setChecked(True)
-        self.track_length.setValue(10)
-        self.frame_skip.setValue(5)
-#        self.redraw()
+        self.tunables['Track length (s)'].setValue(10)
+        self.tunables['Read one frame in'].setValue(5)
+        self.reset_tunables()
     
     
     def choose_input_dir(self):
@@ -294,15 +349,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.window().setWindowTitle(self.input_dir)
 
     def timeout(self):
-        if self.play_button.isChecked():
-            self.frame_slider.setValue(self.frame_slider.value()+self.frame_skip.value())
+        if self.buttons['play'].isChecked():
+            self.sliders['frame'].setValue(self.sliders['frame'].value()+self.tunables['Read one frame in'].value())
     
     def play_pause(self):
-        if self.play_button.isChecked():
-            self.play_button.setText('Pause')
+        if self.buttons['play'].isChecked():
+            self.buttons['play'].setText('Pause')
             self.timer.start()
         else:
-            self.play_button.setText('Play')
+            self.buttons['play'].setText('Play')
             self.timer.stop()
     
     def toggle_fullscreen(self):
@@ -312,81 +367,101 @@ class MainWindow(QtWidgets.QMainWindow):
             self.window().showFullScreen()
 
     def spacebar(self):
-        self.play_button.toggle()
+        self.buttons['play'].toggle()
         self.play_pause()
 
     def next_frame(self):
         # If playing, stop playing.
-        if self.play_button.isChecked():
-            self.play_button.toggle()
+        if self.buttons['play'].isChecked():
+            self.buttons['play'].toggle()
             self.play_pause()
         # Move to next frame.
-        self.frame_slider.setValue(self.frame_slider.value()+1)
+        self.sliders['frame'].setValue(self.sliders['frame'].value()+1)
 
     def previous_frame(self):
         # If playing, stop playing.
-        if self.play_button.isChecked():
-            self.play_button.toggle()
+        if self.buttons['play'].isChecked():
+            self.buttons['play'].toggle()
             self.play_pause()
         # Move to previous frame.
-        self.frame_slider.setValue(self.frame_slider.value()-1)
+        self.sliders['frame'].setValue(self.sliders['frame'].value()-1)
     
     def redraw(self):
-        value = self.frame_slider.value()
+        value = self.sliders['frame'].value()
         t     = value/self.track.fps
         self.clock.setText(f'Time {t//60:.0f}:{t%60:05.2f} / Frame {value}')
         if value==self.track.current_frame()+1:
             self.track.read_frame()
         else:
             self.track.read_frame(value)
-        b1 = self.track.frame.subtract_background(  
-                               self.checkboxes['Subtract Background'].isChecked(), 
-                               self.checkboxes['Subtract Secondary Background'].isChecked() )
-        b2 = self.checkboxes['Apply Tank Mask'].isChecked()
-        if b2:
-            self.track.frame.apply_mask()
-        b3 = self.checkboxes['Show Contours'].isChecked()
-        if b3:
-            # Stash the frame to allow viewing contours over non-thresholded frame.
-            self.track.bgr[:,:,0] = self.track.frame.i8
-            s = self.track.settings
-            self.track.frame.blur(s['n_blur'])
+        if self.checkboxes['Show Contours'].isChecked() or \
+                self.tab_widget.currentIndex()==0:
+            self.track.frame.subtract_background(  
+                   self.checkboxes['Subtract Background'].isChecked(), 
+                   self.checkboxes['Subtract Secondary Background'].isChecked() )
+            if self.checkboxes['Apply Tank Mask'].isChecked():
+                self.track.frame.apply_mask()
+            s = { k:v.value() for k,v in self.tunables.items() }
+            if s['n_blur']>0:
+                self.track.frame.blur(s['n_blur'])
+            if self.tab_widget.currentIndex()==0 and \
+                    not self.checkboxes['Threshold'].isChecked():
+                # Stash the frame to allow viewing contours over non-thresholded frame.
+                self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
             self.track.frame.threshold(s['block_size'], s['offset'])
-            self.track.frame.detect_contours()
-            self.track.frame.analyze_contours( self.track.n_tracks, 
-                                         s['min_area'], s['max_area'], s['max_aspect'])
-            self.track.frame.i8[...] = self.track.bgr[:,:,0]
-        track_length = int(self.track.fps*self.track_length.value()) if \
+            if self.checkboxes['Show Contours'].isChecked():
+                self.track.frame.detect_contours()
+                self.track.frame.analyze_contours( self.track.n_tracks, 
+                             s['min_area'], s['max_area'], s['max_aspect'])
+            if self.tab_widget.currentIndex()==0 and \
+                    self.checkboxes['Threshold'].isChecked():
+                self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
+            if self.checkboxes['Subtract Background'].isChecked():
+                np.subtract(255, self.track.bgr, out=self.track.bgr)
+        
+        track_length = int(self.track.fps*self.tunables['Track length (s)'].value()) if \
                          self.checkboxes['Show Track'].isChecked() else 0
-        b4 = self.track.draw( value, track_length, 
-                              show_fish=self.checkboxes['Show Fish'].isChecked(), 
-                              show_extra=self.checkboxes['Show Extra Objects'].isChecked(),
-                              show_contours=self.checkboxes['Show Contours'].isChecked() )
-        if b1 or b2 or b3 or b4:
-            self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
-        if self.checkboxes['Subtract Background'].isChecked():
-            np.subtract(255, self.track.bgr, out=self.track.bgr)
-        if b4 and self.alpha_slider.value()>0:
-            alpha = self.alpha_slider.value()/100.
+        b = self.track.draw( value, track_length, 
+                    show_fish=self.checkboxes['Show Fish'].isChecked(), 
+                    show_extra=self.checkboxes['Show Extra Objects'].isChecked(),
+                    show_contours=self.checkboxes['Show Contours'].isChecked() )
+        
+        if b and self.sliders['alpha'].value()>0:
+            alpha = self.sliders['alpha'].value()/100.
             mask = np.any(self.track.overlay>0,axis=2)
             self.track.bgr[mask] = ( (1-alpha)*self.track.bgr[mask] + \
                                      alpha*self.track.overlay[mask] ).astype(np.uint8)
+        
         # Convert from openCV image matrix to pyqtgraph image matrix then show on screen.
         self.track.bgr = np.swapaxes(self.track.bgr, 0, 1) # Swap rows and columns.
         self.track.bgr = np.flip(self.track.bgr, 2) # Flip color channel order.
         self.video.setImage(self.track.bgr)
     
-    def track_length_action(self,value):
-        self.redraw()
-
+    def reset_tunables(self):
+        for k in self.tunables.keys():
+            if k in ['Track length (s)', 'Read one frame in']:
+                continue
+            k2 = 'bkgSub_options.'+k if k in ['secondary_factor', \
+                                              'contrast_factor'] else k
+            self.tunables[k].setValue(self.track.settings[k2])
+        self.update_bkgSub()
+        
+    def update_bkgSub(self):
+        self.track.frame.contrast_factor = self.tunables['contrast_factor'].value()
+        self.track.frame.bkg2 = self.track.frame.bkg2_ * \
+                                    self.tunables['secondary_factor'].value() * \
+                                    self.tunables['contrast_factor'].value()
+#        self.redraw()
+    
 
 if __name__ == '__main__':
-#    try:
+    
+##    try:
     app = QtWidgets.QApplication(sys.argv)
     input_dir = sys.argv[1] if len(sys.argv)>1 else None
     wdg = MainWindow(input_dir)
     wdg.show()
     sys.exit(app.exec_())
-#    except:
-#        sys.exit(1)
+##    except:
+##        sys.exit(1)
 

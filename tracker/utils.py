@@ -4,8 +4,11 @@ import logging
 import pickle
 import cv2
 import numpy as np
+import pandas as pd
+from fnmatch import fnmatch
 import matplotlib.pyplot as plt
 import screeninfo
+import flatten_dict
 
 
 #========================================================
@@ -119,6 +122,48 @@ def save_pik(filename, data_dict):
 def load_pik(filename):
     with open(filename,'rb') as f:
         return pickle.load(f)
+
+
+# Given a list of keys and a value, set d[keys[0]][keys[1]][...] = value,
+# creating nested levels as needed.
+def set_nested_dict(d, keys, val):
+    k = keys[0]
+    if len(keys)==1:
+        d[k] = val
+    else:
+        if not k in d.keys():
+            d[k] = {}
+        set_nested_dict(d[k],keys[1:],val)
+
+## Convert a dictionary by nesting keys containing periods:
+## d['a.b.c'] = v --> d['a']['b']['c'] = v
+#def unflatten_dict(d_flat,delimiter='.'):
+#    d = {}
+#    for k,v in d_flat.items():
+#        set_nested_dict(d,k.split(delimiter),eval(v))
+#    return d
+
+# Load a settings file into a dictionary.
+def load_settings(settings_file):
+    ext = os.path.splitext(settings_file)[1]
+    if ext=='.txt':
+        settings = load_txt(settings_file)
+    elif ext=='.xlsx':
+        df = pd.read_excel(settings_file,index_col='parameter name',dtype=str)
+        settings = df['parameter value'].to_dict()
+    else:
+        settings = {}
+#    return unflatten_dict(settings)
+    return flatten_dict.unflatten(settings,'dot')
+
+# Apply settings tweaks with matching filename pattern.
+def load_settings_tweaks(settings,trial_name,tweaks_file):
+    df = pd.read_excel(tweaks_file)
+    for i,row in df.iterrows():
+        trial_pattern,par,val = row[:3]
+        if fnmatch(trial_name.lower(),trial_pattern.lower()):
+            set_nested_dict(settings, par.split('.'), val)
+    return settings
 
 #========================================================
 # Plotting.
