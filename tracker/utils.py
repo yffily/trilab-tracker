@@ -106,26 +106,30 @@ def wait_on_named_window(name,delay=-1):
 #========================================================
 # Save and load.
 
+# Save a dictionary as a text file.
 def save_txt(filename, data_dict):
     txt = '\n'.join( f'{key} = {value}' for key,value in data_dict.items() )
     with open(filename,'w') as f:
         f.write(txt)
 
+# Load a dictionary from a text file.
 def load_txt(filename):
     with open(filename,'r') as f:
         return dict( line.strip().split(' = ') for line in f )
 
+# Save a dictionary as a pickle file.
 def save_pik(filename, data_dict):
     with open(filename,'wb') as f:
         pickle.dump(data_dict, f, protocol = 3)
 
+# Load a dictionary from a pickle file.
 def load_pik(filename):
     with open(filename,'rb') as f:
         return pickle.load(f)
 
-
-# Given a list of keys and a value, set d[keys[0]][keys[1]][...] = value,
-# creating nested levels as needed.
+# Edit or create values in a nested dictionary.
+# Specifically, set d[keys[0]][keys[1]][...] = val. If the nested key
+# sequence doesn't exist, create nested dictionaries as needed.
 def set_nested_dict(d, keys, val):
     k = keys[0]
     if len(keys)==1:
@@ -153,7 +157,6 @@ def load_settings(settings_file):
         settings = df['parameter value'].to_dict()
     else:
         settings = {}
-#    return unflatten_dict(settings)
     return flatten_dict.unflatten(settings,'dot')
 
 # Apply settings tweaks with matching filename pattern.
@@ -164,6 +167,47 @@ def load_settings_tweaks(settings,trial_name,tweaks_file):
         if fnmatch(trial_name.lower(),trial_pattern.lower()):
             set_nested_dict(settings, par.split('.'), val)
     return settings
+
+# Load a trial file created by trilab-tracker.
+def load_trial(trial_file):
+    trial_dir  = os.path.dirname(trial_file)
+    trial      = { 'trial_dir':trial_dir }
+    with open(trial_file,'rb') as f:
+        trial.update(pickle.load(f))
+    trial['data'] = trial['data'][:,:trial['n_ind'],:]
+    ellipse = cv2.fitEllipse(trial['tank']['contour'])
+    trial['center'] = np.array(ellipse[0])
+    trial['R_px']   = np.mean(ellipse[1])/2
+    return trial
+
+# Load a trial file created by ethovision.
+def load_trial_ethovision(trial_file):
+    # Load fish data from ethovision-generated spreadsheet.
+    data  = pd.read_excel( trial_file, sheet_name=None, 
+                           na_values='-', index_col=0, 
+                           skiprows=list(range(35))+[36], 
+                           usecols=['Recording time','X center','Y center','Area'] )
+    n_ind = len(data.keys())
+    # Merge the sheets corresponding to each fish into a single dataframe.
+    df    = pd.concat([ df.rename(columns=lambda x:(i,x)) for i,df in \
+                        enumerate(data.values()) ], axis=1)
+    # Convert to numpy array.
+    time  = df.index.values
+    pos   = df.values.reshape((-1,n_ind,3))
+    vel   = pos[1:,:,:2]-pos[:-1,:,:2]
+    ang   = np.arctan2(vel[:,:,1],vel[:,:,0])
+    for i in range(n_ind):
+        I        = ~np.isnan(ang[:,i])
+        ang[I,i] = np.unwrap(ang[I,i])
+    
+    data  = np.dstack([pos[:-1,:,:2],ang,pos[:-1,:,2]])
+    fps   = 1/np.min(time[1:]-time[:-1])
+    info  = '- n_ind is the number of individuals.\n- time contains the timestamp of each frame.\n- data is an array of size (n_frames,n_ind,4). The 4 quantities saved for each fish in each frame are: x coordinate, y coordinate, angle with x axis (from velocity), area.'
+    
+    trial = { k:v for k,v in locals().items() if k in 
+              ['n_ind', 'time', 'data', 'fps', 'info'] }
+    
+    return trial
 
 #========================================================
 # Plotting.
@@ -192,6 +236,16 @@ color_list = [  (   0,   0, 255),  # red
                 ( 255, 255, 255),  # white
                 (   0,   0,   0) ] # black
 
+
+# Five colors sets (blue, orange, teal, pink, green) with 4 shades of increasing darkness in each.
+color_shades = [ [ '#AADFFC', '#689BB7', '#315C72', '#09232F' ],  
+                 [ '#FC7940', '#BF5428', '#823413', '#491702' ],
+                 [ '#3AFAF2', '#4FB1A8', '#406E67', '#22332E' ],
+                 [ '#F890A2', '#C75778', '#8C264E', '#4C0225' ],
+                 [ '#7bed98', '#5fb86e', '#206634', '#023b13' ] ]
+
+# Five color maps in the same tones as the color shades above.
+color_maps = [ 'Blues', 'Oranges', 'BuGn', 'RdPu', 'Greens' ]
 
 #========================================================
 
