@@ -9,7 +9,7 @@ import datetime
 from tracker import utils
 from tracker.frame import FrameAnalyzer
 from tracker.tank import Tank
-from PyQt5 import QtCore, QtGui, QtWidgets, QtMultimediaWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph
 from pyqtgraph.widgets.RawImageWidget import RawImageWidget
 #import argparse
@@ -311,9 +311,12 @@ class MainWindow(QtWidgets.QMainWindow):
         #--------------------
         # Shortcuts.
         
-        shortcuts  = { 'esc':quit, 'ctrl+q':quit, 'q':quit, 'f5':self.reload, 
-                       ' ':self.spacebar, 'f':self.toggle_fullscreen,
-                       'right':self.next_frame, 'left':self.previous_frame }
+        shortcuts  = { 'esc': quit, 'ctrl+q': quit, 'q': quit, 'f5': self.reload, 
+                       ' ': self.spacebar, 'f': self.toggle_fullscreen,
+                       'right': self.next_frame, 'left': lambda:self.next_frame(-1),
+                       'ctrl+right': lambda:self.next_frame(self.tunables['Read one frame in'].value()), 
+                       'ctrl+left': lambda:self.next_frame(-self.tunables['Read one frame in'].value()) 
+                     }
         for key,action in shortcuts.items():
             shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(key), self)
             shortcut.activated.connect(action)
@@ -347,7 +350,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.track = Track(self.input_dir)
         self.redraw()
         self.window().setWindowTitle(self.input_dir)
-
+    
     def timeout(self):
         if self.buttons['play'].isChecked():
             self.sliders['frame'].setValue(self.sliders['frame'].value()+self.tunables['Read one frame in'].value())
@@ -370,21 +373,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.buttons['play'].toggle()
         self.play_pause()
 
-    def next_frame(self):
+    def next_frame(self, skip=1):
         # If playing, stop playing.
         if self.buttons['play'].isChecked():
             self.buttons['play'].toggle()
             self.play_pause()
         # Move to next frame.
-        self.sliders['frame'].setValue(self.sliders['frame'].value()+1)
-
-    def previous_frame(self):
-        # If playing, stop playing.
-        if self.buttons['play'].isChecked():
-            self.buttons['play'].toggle()
-            self.play_pause()
-        # Move to previous frame.
-        self.sliders['frame'].setValue(self.sliders['frame'].value()-1)
+        self.sliders['frame'].setValue(self.sliders['frame'].value()+skip)
     
     def redraw(self):
         value = self.sliders['frame'].value()
