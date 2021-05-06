@@ -1,4 +1,6 @@
 
-- Fix aspect ratio of cv2 windows in Windows10.
+- Implement a track-fixing history. Make it saveable and loadable. Later, make it reversible (revert last change with ctrl+z), then fully editable (scroll through history and delete/edit any fixing operation then recompute the fixed track).
+
+- (Fix aspect ratio of cv2 windows in Windows10.) Rewrite the tank detection as part of the viewer.
 
 - Pick a third order moment to save at every time step (along with position, angle, area, and aspect ratio) to help identify the front of each fish in post-processing.
