@@ -14,18 +14,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.choose_input_dir()
         else:
             self.input_dir = input_dir
-        self.track  = Track(self.input_dir)
-        self.video  = Video()
+        self.track   = Track(self.input_dir)
+        self.video   = Video()
         self.video.getImageItem().mouseClickEvent = self.video_click
-        self.drag   = []
-        self.tabs   = SidePanel()
-        self.active = []
+        self.drag    = []
+        self.tabs    = SidePanel()
+        self.active  = []
+        self.history = History()
         
-        self.timer = QtCore.QTimer(self)
+        self.timer   = QtCore.QTimer(self)
         self.timer.setInterval(1)
         self.timer.timeout.connect(self.timeout)
         
-        self.keys_down = { k:False for k in [Qt.Key_M]  }
+        self.keys_down = { k:False for k in [Qt.Key_M, Qt.Key_O]  }
         
         #--------------------
         # Widgets.
@@ -39,6 +40,9 @@ class MainWindow(QtWidgets.QMainWindow):
                    'ideal_area', 'Read one frame in' ]
         dspins = [ 'max_aspect', 'ideal_aspect', 'contrast_factor', 
                    'secondary_factor', 'Track length (s)' ]
+        # Map settings names to tunables names.
+        self.setting2tunable = { 'bkgSub_options.secondary_factor':'secondary_factor', 
+                                 'bkgSub_options.contrast_factor':'contrast_factor' }
         for k in spins+dspins:
             self.tunables[k] = QtWidgets.QSpinBox() if k in spins \
                                    else QtWidgets.QDoubleSpinBox()
@@ -79,29 +83,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self.buttons['reset settings'].clicked.connect(self.reset_tunables)
         self.buttons['play'].clicked.connect(self.play_pause)
         
-        # Create fish legend as a layout.
-        # Items in the legend keep track of which fish is(are) selected/active.
-        self.legend = []
-        for i in range(self.track.n_tracks):
-            item = QtWidgets.QPushButton()
-            item.setText(f'  fish {i+1}' if i<self.track.n_ind else f'  object {i+1}')
-            pixmap = QtGui.QPixmap(10,10)
-            pixmap.fill(QtGui.QColor(*get_color(i)[::-1]))
-            item.setIcon(QtGui.QIcon(pixmap))
-            item.setCheckable(True)
-            item.clicked.connect(lambda _,j=i: self.select_fish(j))
-            self.legend.append(item)        
+        # Create fish legends as a layouts of checkable QPushButton objects. Later on the legends'
+        # buttons are made to reflect the current fish selection stored in self.active.
+        self.legends = []
         def create_legend():
-            left   = QtWidgets.QVBoxLayout()
-            right  = QtWidgets.QVBoxLayout()
-            for i,item in enumerate(self.legend):
-                layout = left if i<self.track.n_tracks/2 else right
-                layout.addWidget(item)
-            right.addStretch(1)
-            legend = QtWidgets.QHBoxLayout()
-            legend.addLayout(left)
-            legend.addLayout(right)
-            return legend
+            legend = []
+            grid   = QtWidgets.QGridLayout()
+            for i in range(self.track.n_tracks):
+                item = QtWidgets.QPushButton()
+                item.setText(f'  fish {i+1}' if i<self.track.n_ind else f'  object {i+1}')
+                pixmap = QtGui.QPixmap(10,10)
+                pixmap.fill(QtGui.QColor(*get_color(i)[::-1]))
+                item.setIcon(QtGui.QIcon(pixmap))
+                item.setCheckable(True)
+                item.clicked.connect(lambda _,j=i: self.select_fish(j))
+                legend.append(item)        
+                n = int(np.ceil(self.track.n_tracks/2))
+                grid.addWidget(item, i%n, i//n, Qt.AlignTop)
+            self.legends.append(legend)
+            return grid
         
         # Create a widget with a name and spinbox side-by-side.
         def create_spinbox_row(label):
@@ -140,16 +140,9 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Set up 'Fix' tab.
         tab = self.tabs.fix
-#        tab.addLayout(create_legend())
-#        tab.addWidget(QtWidgets.QLabel(' '))
-#        tab.addWidget(QtWidgets.QLabel('Active Fish:'))
-#        self.active_fish = QtWidgets.QComboBox()
-#        for i in range(self.track.n_ind):
-#            self.active_fish.addItem(f'fish {i+1}')
-#        tab.addWidget(self.active_fish)
-#        tab.addWidget(QtWidgets.QLabel(' '))
-        tab.addWidget(QtWidgets.QLabel('Not implemented yet.'))
-        tab.addStretch(1)
+        tab.addLayout(create_legend())
+        tab.addWidget(self.history)
+#        tab.addStretch(1)
         
         #--------------------
         # Window layout.
@@ -193,9 +186,9 @@ class MainWindow(QtWidgets.QMainWindow):
         #--------------------
         # Shortcuts.
         
-        shortcuts  = { 'esc': quit, 'ctrl+q': quit, 'q': quit, 'f5': self.reload, 
-                       ' ': self.spacebar, 'f': self.toggle_fullscreen,
-                       'right': self.next_frame, 'left': lambda:self.next_frame(-1),
+        shortcuts  = { 'esc': quit, 'ctrl+q': quit, 'ctrl+s': self.save, 'ctrl+z': self.undo, 
+                       'f5': self.reload, 'f': self.toggle_fullscreen, ' ': self.spacebar, 
+                       'right': self.next_frame, 'left': lambda:self.next_frame(-1), 
                        'ctrl+right': lambda:self.next_frame(self.tunables['Read one frame in'].value()), 
                        'ctrl+left': lambda:self.next_frame(-self.tunables['Read one frame in'].value()), 
                      }
@@ -216,6 +209,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tunables['Track length (s)'].setValue(10)
         self.tunables['Read one frame in'].setValue(5)
         self.reset_tunables()
+        
+        self.load()
     
     
     def choose_input_dir(self):
@@ -232,6 +227,44 @@ class MainWindow(QtWidgets.QMainWindow):
         self.track = Track(self.input_dir)
         self.redraw()
         self.window().setWindowTitle(self.input_dir)
+    
+    def save(self, save_tracks=True):
+        # Save settings.
+        D = self.track.settings.copy()
+        for k in D.keys():
+            k2 = self.setting2tunable.get(k,k)
+            if k2 in self.tunables.keys():
+                D[k] = self.tunables[k2].value()
+        utils.save_txt(self.track.join('gui_settings.txt'), D)
+        # Save fix history and fixed tracks.
+        D = { 'fixes':self.history.fixes }
+        if save_tracks:
+            D['tracks'] = self.track.tracks
+        utils.save_pik(self.track.join('gui_fixes.pik'), D)
+        utils.save_txt(self.track.join('gui_fixes.txt'), dict(enumerate(self.history.fixes)))
+    
+    def load(self):
+        try:
+            # Load settings.
+            D = utils.load_txt(self.track.join('gui_settings.txt'))
+            for k,v in D.items():
+                k2 = self.setting2tunable.get(k,k)
+                t = self.tunables.get(k2)
+                if not t is None:
+                    if isinstance(t,QtWidgets.QSpinBox):
+                        v = int(v)
+                    elif isinstance(t,QtWidgets.QDoubleSpinBox):
+                        v = float(v)
+                    self.tunables[k2].setValue(v)
+            self.update_bkgSub()
+            # Load fix history and fixed tracks.
+            D = utils.load_pik(self.track.join('gui_fixes.pik'))
+            self.history.fixes = D['fixes']
+            self.history.sync()
+            self.apply_fixes()
+            return True
+        except:
+            return False
     
     def timeout(self):
         if self.buttons['play'].isChecked():
@@ -265,7 +298,7 @@ class MainWindow(QtWidgets.QMainWindow):
     
     def redraw(self):
         value = self.sliders['frame'].value()
-        t     = value/self.track.fps
+        t     = (value-1)/self.track.fps
         self.clock.setText(f'Time {t//60:.0f}:{t%60:05.2f} / Frame {value}')
         if value==self.track.current_frame()+1:
             self.track.read_frame()
@@ -286,7 +319,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     not self.checkboxes['Threshold'].isChecked():
                 # Stash the frame to allow viewing contours over non-thresholded frame.
                 self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
-            self.track.frame.threshold(s['block_size'], s['offset'])
+            block_size = s['block_size'] + s['block_size']%2 - 1
+            self.track.frame.threshold(block_size, s['offset'])
             if self.checkboxes['Show Contours'].isChecked():
                 self.track.frame.detect_contours()
                 self.track.frame.analyze_contours( self.track.n_tracks, 
@@ -314,12 +348,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.video.setImage_(self.track.bgr) # ! Modifies track.bgr (converts to pyqtgraph image).
     
     def reset_tunables(self):
-        for k in self.tunables.keys():
-            if k in ['Track length (s)', 'Read one frame in']:
-                continue
-            k2 = 'bkgSub_options.'+k if k in ['secondary_factor', \
-                                              'contrast_factor'] else k
-            self.tunables[k].setValue(self.track.settings[k2])
+        for k in self.track.settings.keys():
+            k2 = self.setting2tunable.get(k,k)
+            if k2 in self.tunables.keys():
+                self.tunables[k2].setValue(self.track.settings[k])
         self.update_bkgSub()
         
     def update_bkgSub(self):
@@ -327,6 +359,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.track.frame.bkg2 = self.track.frame.bkg2_ * \
                                     self.tunables['secondary_factor'].value() * \
                                     self.tunables['contrast_factor'].value()
+
+    def update_fish_selection(self):
+        for legend in self.legends:
+            for j,item in enumerate(legend):
+                item.setChecked(j in self.active)
 
     def select_fish(self, i):
         if i is None:
@@ -336,42 +373,75 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.active.append(i)
         while len(self.active)>2:
-          self.active.pop(0)
-        for j,item in enumerate(self.legend):
-            item.setChecked(j in self.active)
+            self.active.pop(0)
+        self.update_fish_selection()
 
     def video_click(self,event):
         if event.button()!=QtCore.Qt.LeftButton:
             event.ignore()
             return
-        if self.keys_down[Qt.Key_M] and len(self.active)==1:
-            j = self.active[0]
-            self.track.move(j, event.pos())
-            self.redraw()
-            return
+        if len(self.active)==1:
+            if self.keys_down[Qt.Key_M]:
+                j = self.active[-1]
+                self.track.fix('move', j, np.around(event.pos(),1), history=self.history)
+                self.redraw()
+                return
+            if self.keys_down[Qt.Key_O]:
+                i = self.track.current_frame()-1
+                j = self.active[-1]
+                # New direction goes from current position to clicked position.
+                u = np.array(event.pos())-self.track.tracks[i,j,:2]
+                a = np.around(np.arctan2(u[1], u[0]), 2)
+                self.track.fix('orient', j, a, i=i, history=self.history)
+                self.redraw()
+                return
         j = self.track.select_fish(event.pos())
         self.select_fish(j)
     
     def keyPressEvent(self,event):
-        if event.key()==Qt.Key_M:
-            self.keys_down[Qt.Key_M] = True
+        # List of Qt key variables: https://doc.qt.io/qt-5/qt.html#Key-enum
+        if event.key() in [Qt.Key_M,Qt.Key_O]:
+            self.keys_down[event.key()] = True
             self.active = self.active[-1:]
+            self.update_fish_selection()
             return
         if event.key()==Qt.Key_S:
-            print('pressing s')
             if len(self.active)==2:
-                print('swapping',self.active)
-                self.track.swap(*self.active)
+                self.track.fix('swap', *self.active, history=self.history)
                 self.redraw()
+            return
+        if event.key()==Qt.Key_R:
+            while len(self.active)>1:
+                self.active.pop()
+            self.update_fish_selection()
+            j = self.active[0]
+            self.track.fix('reverse', j, history=self.history)
+            self.redraw()
+            return
+        if event.key()==Qt.Key_Delete:
+            if self.tabs.currentWidget()==self.tabs.fix.parent():
+                for item in self.history.selectedItems():
+                    self.history.remove_fix(self.history.row(item))
+                self.apply_fixes()
 
     def keyReleaseEvent(self,event):
         if event.key() in self.keys_down.keys():
             self.keys_down[event.key()] = False
     
+    def undo(self):
+        if self.tabs.currentWidget()==self.tabs.fix.parent() and len(self.history.fixes)>0:
+            self.history.remove_fix()
+#            self.history.sync()
+            self.apply_fixes()
+    
+    def apply_fixes(self):
+        self.track.load_tracks()
+        for fix in self.history.fixes:
+            self.track.fix(*fix[:-1],i=fix[-1]) #, self.history)
+        self.redraw()
+    
+    
 #    def video_drag(self,event):
-##        if event.button()!=QtCore.Qt.LeftButton:
-##            event.ignore()
-##            return
 #        print('drag event')
 #        if event.isStart():
 #            print('drag event start')
@@ -390,42 +460,10 @@ class MainWindow(QtWidgets.QMainWindow):
 #            p2 = event.buttonDownPos()
 #            i,j,p1 = self.drag
 #            print(p2-p1)
-#            self.track.track[i,j,:2] += p2-p1
+#            self.track.tracks[i,j,:2] += p2-p1
 #            self.redraw()
 #            return
 #        else:
 #            event.ignore()
 #            return
-#        
-#        p2 = event.pos()
-#        i,j,p1 = self.drag
-#        print(p2-p1)
-#        self.track.track[i,j,:2] += p2-p1
-#        self.redraw()
-
-
-#        if ev.isStart():
-#            # We are already one step into the drag.
-#            # Find the point(s) at the mouse cursor when the button was first 
-#            # pressed:
-#            pos = ev.buttonDownPos()
-#            pts = self.scatter.pointsAt(pos)
-#            if len(pts) == 0:
-#                ev.ignore()
-#                return
-#            self.dragPoint = pts[0]
-#            ind = pts[0].data()[0]
-#            self.dragOffset = self.data['pos'][ind] - pos
-#        elif ev.isFinish():
-#            self.dragPoint = None
-#            return
-#        else:
-#            if self.dragPoint is None:
-#                ev.ignore()
-#                return
-#        
-#        ind = self.dragPoint.data()[0]
-#        self.data['pos'][ind] = ev.pos() + self.dragOffset
-#        self.updateGraph()
-#        ev.accept()
 
