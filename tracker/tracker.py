@@ -11,7 +11,7 @@ from scipy.spatial.distance import cdist
 from scipy.stats import skew
 from .tank import Tank
 from .utils import *
-from .frame import FrameAnalyzer
+from .frame import Frame
 import datetime
 import enum
     
@@ -164,7 +164,7 @@ class Tracker:
         self.set_frame(self.frame_start-1)
         
         self.bgr   = np.empty( shape=(self.height,self.width), dtype=np.uint8 )
-        self.frame = FrameAnalyzer( shape=(self.height,self.width) ) 
+        self.frame = Frame( shape=(self.height,self.width) ) 
         self.frame.contrast_factor = self.bkgSub_options['contrast_factor']
         
         
@@ -252,9 +252,8 @@ class Tracker:
             return True
         return False
 
-
     def compute_background(self):
-        logging.info(parindent+'Computing background') 
+        logging.info(parindent+'Computing background')
         t_start    = self.bkgSub_options['t_start']
         t_end      = self.bkgSub_options['t_end']
         n_training = self.bkgSub_options['n_training_frames']

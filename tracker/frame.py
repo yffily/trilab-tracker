@@ -5,7 +5,7 @@ import numpy.linalg as la
 from scipy.stats import skew
 
 
-class FrameAnalyzer:
+class Frame:
     
     def __init__(self, shape):
         # shape is (height,width,channels)

@@ -26,7 +26,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.setInterval(1)
         self.timer.timeout.connect(self.timeout)
         
-        self.keys_down = { k:False for k in [Qt.Key_M, Qt.Key_O]  }
+        self.keys_down = { k:False for k in [Qt.Key_P, Qt.Key_O, Qt.Key_I, Qt.Key_D]  }
         
         #--------------------
         # Widgets.
@@ -191,6 +191,8 @@ class MainWindow(QtWidgets.QMainWindow):
                        'right': self.next_frame, 'left': lambda:self.next_frame(-1), 
                        'ctrl+right': lambda:self.next_frame(self.tunables['Read one frame in'].value()), 
                        'ctrl+left': lambda:self.next_frame(-self.tunables['Read one frame in'].value()), 
+#                       'i+p': lambda:self.interpolate('position'),  
+#                       'i+o': lambda:self.interpolate('orientation'),  
                      }
         for key,action in shortcuts.items():
             shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(key), self)
@@ -200,11 +202,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Starting options.
         
         self.tabs.setCurrentWidget(self.tabs.view.parent()) # Start in 'View' tab.
-        i = self.track.frames[0] if len(self.track.frames)>0 else 0
+#        i = self.track.frames[0] if len(self.track.frames)>0 else 0
+        i = 5147
         self.sliders['frame'].setValue(i) # Go to beginning of video.
         self.sliders['alpha'].setValue(50) # Go to beginning of video.
         self.checkboxes['Show Fish'].setChecked(True)
-        self.checkboxes['Show Extra Objects'].setChecked(True)
         self.checkboxes['Show Track'].setChecked(True)
         self.tunables['Track length (s)'].setValue(10)
         self.tunables['Read one frame in'].setValue(5)
@@ -259,6 +261,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_bkgSub()
             # Load fix history and fixed tracks.
             D = utils.load_pik(self.track.join('gui_fixes.pik'))
+#            for i,f in enumerate(D['fixes']):
+##                print(f)
+#                if type(f[1])==type(f[-1]) and f[1]==f[-1]:
+#                    D['fixes'][i] = f[:-1]
+#                print(D['fixes'][i])
             self.history.fixes = D['fixes']
             self.history.sync()
             self.apply_fixes()
@@ -381,9 +388,9 @@ class MainWindow(QtWidgets.QMainWindow):
             event.ignore()
             return
         if len(self.active)==1:
-            if self.keys_down[Qt.Key_M]:
+            if self.keys_down[Qt.Key_P]:
                 j = self.active[-1]
-                self.track.fix('move', j, np.around(event.pos(),1), history=self.history)
+                self.track.fix('position', None, j, np.around(event.pos(),1), history=self.history)
                 self.redraw()
                 return
             if self.keys_down[Qt.Key_O]:
@@ -392,7 +399,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # New direction goes from current position to clicked position.
                 u = np.array(event.pos())-self.track.tracks[i,j,:2]
                 a = np.around(np.arctan2(u[1], u[0]), 2)
-                self.track.fix('orient', j, a, i=i, history=self.history)
+                self.track.fix('orientation', i, j, a, history=self.history)
                 self.redraw()
                 return
         j = self.track.select_fish(event.pos())
@@ -400,14 +407,28 @@ class MainWindow(QtWidgets.QMainWindow):
     
     def keyPressEvent(self,event):
         # List of Qt key variables: https://doc.qt.io/qt-5/qt.html#Key-enum
-        if event.key() in [Qt.Key_M,Qt.Key_O]:
+        if event.key() in [Qt.Key_P,Qt.Key_O,Qt.Key_I,Qt.Key_D]:
             self.keys_down[event.key()] = True
-            self.active = self.active[-1:]
             self.update_fish_selection()
+            self.active = self.active[-1:]
+            if len(self.active)==0:
+                return
+            if self.keys_down[Qt.Key_I] and self.keys_down[Qt.Key_P]:
+                self.track.fix('interpolate_position', None, self.active[0], history=self.history)
+                self.redraw()
+            if self.keys_down[Qt.Key_I] and self.keys_down[Qt.Key_O]:
+                self.track.fix('interpolate_orientation', None, self.active[0], history=self.history)
+                self.redraw()
+            if self.keys_down[Qt.Key_D] and self.keys_down[Qt.Key_P]:
+                self.track.fix('delete_position', None, self.active[0], history=self.history)
+                self.redraw()
+            if self.keys_down[Qt.Key_D] and self.keys_down[Qt.Key_O]:
+                self.track.fix('delete_orientation', None, self.active[0], history=self.history)
+                self.redraw()
             return
         if event.key()==Qt.Key_S:
             if len(self.active)==2:
-                self.track.fix('swap', *self.active, history=self.history)
+                self.track.fix('swap', None, *self.active, history=self.history)
                 self.redraw()
             return
         if event.key()==Qt.Key_R:
@@ -415,7 +436,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.active.pop()
             self.update_fish_selection()
             j = self.active[0]
-            self.track.fix('reverse', j, history=self.history)
+            self.track.fix('reverse', None, j, history=self.history)
             self.redraw()
             return
         if event.key()==Qt.Key_Delete:
@@ -423,6 +444,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 for item in self.history.selectedItems():
                     self.history.remove_fix(self.history.row(item))
                 self.apply_fixes()
+            return
 
     def keyReleaseEvent(self,event):
         if event.key() in self.keys_down.keys():
@@ -437,7 +459,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def apply_fixes(self):
         self.track.load_tracks()
         for fix in self.history.fixes:
-            self.track.fix(*fix[:-1],i=fix[-1]) #, self.history)
+            self.track.fix(*fix) #, self.history)
         self.redraw()
     
     
@@ -459,7 +481,6 @@ class MainWindow(QtWidgets.QMainWindow):
 #            print('drag event finish')
 #            p2 = event.buttonDownPos()
 #            i,j,p1 = self.drag
-#            print(p2-p1)
 #            self.track.tracks[i,j,:2] += p2-p1
 #            self.redraw()
 #            return

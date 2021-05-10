@@ -1,5 +1,8 @@
 
+- Add an "interpolate" fix which performs linear interpolation between last known point and current point.
+
 - Add a "prepare" tab with buttons to compute the background and detect the tank. The latter goes hand-in-hand with porting the current interactive tank detection gui from cv2 to pyqt5+pyqtgraph.
+  [May require deep changes, including moving background creation to somewhere it can be shared by the tracker and the viewer.] 
 
 - Figure out how to handle mouse drag in pyqt5+pyqtgraph.
 

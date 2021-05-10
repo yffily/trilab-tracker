@@ -3,7 +3,7 @@ import os
 import cv2
 import numpy as np
 from . import utils
-from .frame import FrameAnalyzer
+from .frame import Frame
 from .tank import Tank
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph
@@ -53,7 +53,7 @@ class Track:
         self.n_frames  = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         width          = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height         = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.frame     = FrameAnalyzer((height,width))
+        self.frame     = Frame((height,width))
         self.frame.contrast_factor = self.settings['bkgSub_options.contrast_factor']
         self.bgr       = np.empty(shape=(height,width,3), dtype=np.uint8)
         self.overlay   = np.empty_like(self.bgr)
@@ -150,26 +150,57 @@ class Track:
 #        def wrapper(*args, **kwargs):
 
     # Move fish j to position xy in frame i.
-    def move(self, j, xy, i):
+    def fix_position(self, i, j, xy):
         self.tracks[i,j,:2] = xy
 
     # Change orientation of fish j to angle a in frame i.
-    def orient(self, j, a, i):
+    def fix_orientation(self, i, j, a):
         self.tracks[i,j,2] = a
 
     # Reverse direction of fish j from frame i on.
-    def reverse(self, j, i):
+    def fix_reverse(self, i, j):
         self.tracks[i:,j,2] = self.tracks[i:,j,2] + np.pi
 
     # Swap fish j1 and j2 from frame i on.
-    def swap(self, j1, j2, i):
+    def fix_swap(self, i, j1, j2):
         self.tracks[i:,[j1,j2]] = self.tracks[i:,[j2,j1]]
+    
+    # Fill array X between indices i1 and i2 using linear interpolation.
+    def interpolate(self,X,i1,i2):
+        I = np.arange(1,i2-i1)
+        for i in range(i1+1,i2):
+            X[i] = X[i1] + (X[i2]-X[i1])*(i-i1)/(i2-i1)
+    
+    # Interpolate position of fish j from last known position to current frame (i).
+    def fix_interpolate_position(self, i, j):
+        I = np.nonzero(~np.any(np.isnan(self.tracks[:i,j,:2]), axis=1))[0]
+        if len(I)==0 or I[-1]==i-1:
+            return False
+        self.interpolate(self.tracks[:,j,:2],I[-1],i)
+        return True
 
-    def fix(self, *fix, i=None, history=None):
-        i = self.current_frame()-1 if i is None else i
-        getattr(self,fix[0])(*fix[1:], i=i)
+    # Interpolate orientation of fish j from last known orientation to current frame (i).
+    def fix_interpolate_orientation(self, i, j):
+        I = np.nonzero(~np.isnan(self.tracks[:i,j,2]))[0]
+        if len(I)==0 or I[-1]==i-1:
+            return False
+        self.interpolate(self.tracks[:,j,2],I[-1],i)
+        return True
+
+    # Delete position of fish j in frame i.
+    def fix_delete_position(self, i, j):
+        self.tracks[i,j,:2] = np.nan
+
+    # Delete orientation of fish j in frame i.
+    def fix_delete_orientation(self, i, j):
+        self.tracks[i,j,2] = np.nan
+
+    def fix(self, *fix, history=None):
+        i = self.current_frame()-1 if fix[1] is None else fix[1]
+        fix = fix[:1] + (i,) + fix[2:]
+        getattr(self,'fix_'+fix[0])(*fix[1:])
         if not history is None:
-            history.add_fix(fix+(i,))
+            history.add_fix(fix)
 
 #----------------------------------------------------------
 
