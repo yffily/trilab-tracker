@@ -43,16 +43,18 @@ parindent = '' # ' '*5
 #    logging.dictConfig(config)
 
 
-def add_log_file(filename,level=logging.INFO):
+def add_log_file(filename, level=logging.INFO):
     handler = logging.FileHandler(filename,mode='w')
     handler.setLevel(level)
     logging.root.addHandler(handler)
     logging.root.setLevel(level)
 
-def add_log_stream(stream=sys.stdout,level=logging.INFO):
+def add_log_stream(stream=sys.stdout, level=logging.INFO, overwrite=False):
     handler = logging.StreamHandler(stream)
     handler.setLevel(level)
-#    handler.terminator = '\r'
+    if overwrite:
+        handler.terminator = ''
+        handler.setFormatter(logging.Formatter('\r'+' '*200+'\r     %(message)s'))        
     logging.root.addHandler(handler)
     logging.root.setLevel(level)
         
@@ -61,6 +63,9 @@ def reset_logging():
     logging.root.addHandler(logging.NullHandler())
 #    for h in logging.root.handlers:
 #        logging.root.removeHandler(h)
+
+def overprint(msg):
+    print('\r'+' '*200+f'\r{msg}', end='')
 
 #========================================================
 # openCV window interaction.
@@ -127,45 +132,39 @@ def load_pik(filename):
     with open(filename,'rb') as f:
         return pickle.load(f)
 
-# Edit or create values in a nested dictionary.
-# Specifically, set d[keys[0]][keys[1]][...] = val. If the nested key
-# sequence doesn't exist, create nested dictionaries as needed.
-def set_nested_dict(d, keys, val):
-    k = keys[0]
-    if len(keys)==1:
-        d[k] = val
-    else:
-        if not k in d.keys():
-            d[k] = {}
-        set_nested_dict(d[k],keys[1:],val)
-
-## Convert a dictionary by nesting keys containing periods:
-## d['a.b.c'] = v --> d['a']['b']['c'] = v
-#def unflatten_dict(d_flat,delimiter='.'):
-#    d = {}
-#    for k,v in d_flat.items():
-#        set_nested_dict(d,k.split(delimiter),eval(v))
-#    return d
-
 # Load a settings file into a dictionary.
+# Can be a txt file (e.g. output from tracker) or an excel file.
 def load_settings(settings_file):
     ext = os.path.splitext(settings_file)[1]
     if ext=='.txt':
         settings = load_txt(settings_file)
+        for k,v in settings.items():
+            settings[k] = eval(v)
     elif ext=='.xlsx':
-        df = pd.read_excel(settings_file,index_col='parameter name',dtype=str)
-        settings = df['parameter value'].to_dict()
+        df = pd.read_excel(settings_file, index_col='parameter name', dtype=str)
+        settings = df['parameter value'].apply(eval).to_dict()
     else:
         settings = {}
-    return flatten_dict.unflatten(settings,'dot')
+    return settings
 
-# Apply settings tweaks with matching filename pattern.
-def load_settings_tweaks(settings,trial_name,tweaks_file):
-    df = pd.read_excel(tweaks_file)
-    for i,row in df.iterrows():
-        trial_pattern,par,val = row[:3]
-        if fnmatch(trial_name.lower(),trial_pattern.lower()):
-            set_nested_dict(settings, par.split('.'), val)
+# Load an excel settings file with a "trial filter" column specifying
+# which trials each setting applies to in the form of a glob pattern.
+# The result is a dictionary of settings dictionaries. 
+# The keys of the outer dictionary are the glob patterns.
+def load_filtered_settings(settings_file):
+    df = pd.read_excel(settings_file, dtype=str)
+    df['parameter value'] = df['parameter value'].apply(eval)
+    fsettings = {}
+    for pattern,df_ in df.groupby('trial filter'):
+        fsettings[pattern] = dict(df_[['parameter name','parameter value']].values)
+    return fsettings
+
+# Create a trial's settings dictionary from a filtered settings dictionary.
+def apply_filtered_settings(filtered_settings, trial_name):
+    settings = {}
+    for pattern,settings_ in filtered_settings.items():
+        if fnmatch(trial_name.lower(),pattern.lower()):
+            settings.update(settings_)
     return settings
 
 # Load a trial file created by trilab-tracker.

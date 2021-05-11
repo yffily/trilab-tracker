@@ -1,5 +1,5 @@
 
-- Add an "interpolate" fix which performs linear interpolation between last known point and current point.
+- Viewer: Add option to export a video based on current view/settings. Make it possible to pick a frame range.
 
 - Add a "prepare" tab with buttons to compute the background and detect the tank. The latter goes hand-in-hand with porting the current interactive tank detection gui from cv2 to pyqt5+pyqtgraph.
   [May require deep changes, including moving background creation to somewhere it can be shared by the tracker and the viewer.] 

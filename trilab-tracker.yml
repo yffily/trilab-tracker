@@ -12,7 +12,6 @@ dependencies:
   - pyqtgraph
   - xlrd # read excel spreadsheets
   - openpyxl # write excel spreadsheets
-  - flatten-dict
   - opencv
   - pip:
 #    - opencv-python
@@ -21,3 +20,4 @@ dependencies:
     - argparse
     - screeninfo # get screen resolution
     - PythonVideoConverter # ffmpeg based video conversion
+    - flatten-dict

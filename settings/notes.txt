@@ -1,0 +1,2 @@
+"larval-schooling" is for the 2020 trials with opaque walls.
+"larval-schooling-2" is for the 2021 trials with semi-transparent walls.

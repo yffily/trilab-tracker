@@ -36,13 +36,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Create spinboxes (editable values).
         self.tunables = {}
-        spins  = [ 'n_blur', 'block_size', 'offset', 'min_area', 'max_area', 
+        spins  = [ 'n_blur', 'block_size', 'threshold_offset', 'min_area', 'max_area', 
                    'ideal_area', 'Read one frame in' ]
         dspins = [ 'max_aspect', 'ideal_aspect', 'contrast_factor', 
                    'secondary_factor', 'Track length (s)' ]
         # Map settings names to tunables names.
-        self.setting2tunable = { 'bkgSub_options.secondary_factor':'secondary_factor', 
-                                 'bkgSub_options.contrast_factor':'contrast_factor' }
+        self.setting2tunable = { 'bkg.secondary_factor':'secondary_factor', 
+                                 'bkg.contrast_factor':'contrast_factor' }
         for k in spins+dspins:
             self.tunables[k] = QtWidgets.QSpinBox() if k in spins \
                                    else QtWidgets.QDoubleSpinBox()
@@ -115,7 +115,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for k in [ 'Subtract Background', 'Subtract Secondary Background', 
                    'Apply Tank Mask', 'Threshold', 'Show Contours' ]:
             tab.addWidget(self.checkboxes[k])
-        for k in [ 'n_blur', 'block_size', 'offset', 'min_area', 'max_area', 
+        for k in [ 'n_blur', 'block_size', 'threshold_offset', 'min_area', 'max_area', 
                    'ideal_area', 'max_aspect', 'ideal_aspect', 
                    'contrast_factor', 'secondary_factor' ]:
             tab.addLayout(create_spinbox_row(k))
@@ -202,8 +202,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Starting options.
         
         self.tabs.setCurrentWidget(self.tabs.view.parent()) # Start in 'View' tab.
-#        i = self.track.frames[0] if len(self.track.frames)>0 else 0
-        i = 5147
+        i = self.track.frames[0] if len(self.track.frames)>0 else 0
         self.sliders['frame'].setValue(i) # Go to beginning of video.
         self.sliders['alpha'].setValue(50) # Go to beginning of video.
         self.checkboxes['Show Fish'].setChecked(True)
@@ -261,11 +260,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update_bkgSub()
             # Load fix history and fixed tracks.
             D = utils.load_pik(self.track.join('gui_fixes.pik'))
-#            for i,f in enumerate(D['fixes']):
-##                print(f)
-#                if type(f[1])==type(f[-1]) and f[1]==f[-1]:
-#                    D['fixes'][i] = f[:-1]
-#                print(D['fixes'][i])
             self.history.fixes = D['fixes']
             self.history.sync()
             self.apply_fixes()
@@ -327,7 +321,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Stash the frame to allow viewing contours over non-thresholded frame.
                 self.track.bgr[:,:,:] = self.track.frame.i8[:,:,None]
             block_size = s['block_size'] + s['block_size']%2 - 1
-            self.track.frame.threshold(block_size, s['offset'])
+            self.track.frame.threshold(block_size, s['threshold_offset'])
             if self.checkboxes['Show Contours'].isChecked():
                 self.track.frame.detect_contours()
                 self.track.frame.analyze_contours( self.track.n_tracks, 

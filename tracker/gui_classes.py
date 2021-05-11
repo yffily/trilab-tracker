@@ -17,6 +17,7 @@ marker_lw     = 3
 arrow_size    = 10
 contour_width = 2
 contour_color = (0,255,0) # bgr
+text_color    = (0,255,0) # bgr
 select_radius = 15
 
 #pyqtgraph.setConfigOption('leftButtonPan', False)
@@ -43,10 +44,8 @@ class Track:
         self.n_tracks  = self.tracks.shape[1]
         
     def load_parameters(self):
-        self.settings  = utils.load_txt(self.join('settings.txt'))
-        for k,v in self.settings.items():
-            self.settings[k] = eval(v)
-        self.settings  = flatten_dict.flatten(self.settings,'dot')
+        self.settings  = utils.load_settings(self.join('settings.txt'))
+        self.settings  = flatten_dict.flatten(self.settings, 'dot')
         
         input_video    = self.join('raw.avi')
         self.cap       = cv2.VideoCapture(input_video)
@@ -54,7 +53,7 @@ class Track:
         width          = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height         = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.frame     = Frame((height,width))
-        self.frame.contrast_factor = self.settings['bkgSub_options.contrast_factor']
+        self.frame.contrast_factor = self.settings['bkg.contrast_factor']
         self.bgr       = np.empty(shape=(height,width,3), dtype=np.uint8)
         self.overlay   = np.empty_like(self.bgr)
         self.read_frame()
@@ -69,12 +68,19 @@ class Track:
         if os.path.exists(bkg2_file):
             self.frame.bkg2_ = next(iter(np.load(bkg2_file).values()))
             self.frame.bkg2  = self.frame.bkg2_.copy()
-            self.frame.bkg2 *= self.settings['bkgSub_options.secondary_factor'] * \
-                                  self.settings['bkgSub_options.contrast_factor']
-    
+            self.frame.bkg2 *= self.settings['bkg.secondary_factor'] * \
+                                  self.settings['bkg.contrast_factor']
+
     def current_frame(self):
         return int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
-    
+
+    def current_timestamp(self):
+        s = (self.current_frame()-1)/self.fps
+        m,s = divmod(s,60)
+        return m,s
+#        h,m = divmod(m,60)
+#        return h,m,s # f'{h:02.0f}:{m:02.0f}:{s:05.2f}'
+
     def read_frame(self, i=None):
         if isinstance(i,int):
             di = i-self.current_frame()
@@ -88,7 +94,7 @@ class Track:
         ret,self.bgr = self.cap.read()
         self.frame.from_bgr(self.bgr)
         return ret
-    
+
     def draw_fish(self, xy_th, color):
         x,y,th = xy_th
         if not (np.isnan(x) or np.isnan(y)):
@@ -99,7 +105,7 @@ class Track:
                 x1,y1,x2,y2 = int(x-ux),int(y-uy),int(x+ux),int(y+uy)
                 cv2.arrowedLine( self.overlay, (x1,y1), (x2,y2), color=color, 
                                  thickness=marker_lw, tipLength=0.5 )
-            
+
     def draw_extra(self, xy, color):
         x,y = xy
         if not (np.isnan(x) or np.isnan(y)):
@@ -107,8 +113,21 @@ class Track:
             xy = [(x+a*marker_size,y+b*marker_size) for a in [-1,1] for b in [-1,1]]
             cv2.line(self.overlay, xy[0], xy[3], color, marker_lw)
             cv2.line(self.overlay, xy[1], xy[2], color, marker_lw)
-            
-    def draw(self, i, track_length, show_fish=True, show_extra=True, show_contours=False):
+
+    def draw_time(self, show_frame_number, show_timestamp):
+        font = cv2.FONT_HERSHEY_SCRIPT_SIMPLEX
+        y = 30
+        if show_timestamp:
+            m,s   = self.current_timestamp()
+            t_str = f'{m:02.0f}:{s:05.2f}'
+            cv2.putText(self.overlay, t_str, (5,y), font, 1, text_color, 2)
+            y += 30
+        if show_frame_number:
+            t_str = f'{self.current_frame()}'
+            cv2.putText(self.overlay, t_str, (5,y), font, 1, text_color, 2)
+
+    def draw(self, i, track_length, show_fish=True, show_extra=True, 
+             show_contours=False, show_frame_number=False, show_timestamp=False):
         has_overlay = False
         self.overlay.fill(0)
         if show_contours:
@@ -133,6 +152,9 @@ class Track:
             if show_extra and m>=self.n_ind:
                 self.draw_extra(self.tracks[l,m,:2], color)
                 has_overlay = True
+        if show_frame_number or show_timestamp:
+            self.draw_time(show_frame_number, show_timestamp)
+            has_overlay = True
         # Return True if an overlay was created.
         return has_overlay
 
@@ -246,7 +268,7 @@ class Video(pyqtgraph.ImageView):
     def setImage_(self, img):
         img = np.swapaxes(img, 0, 1) # Swap rows and columns.
         img = np.flip(img, 2) # Flip color channel order.
-        self.setImage(img, autoRange=False)
+        self.setImage(img, autoRange=False, autoLevels=False, levels=(0,255))
     
 #    def click(self, event):
 #        print('click event:', event.pos())
