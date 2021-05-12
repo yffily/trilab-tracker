@@ -180,13 +180,13 @@ class MainWindow(QtWidgets.QMainWindow):
         action.triggered.connect(self.reload)
         file_menu.addAction(action)
         action = QtWidgets.QAction('Exit',self)
-        action.triggered.connect(quit)
+        action.triggered.connect(self.close)
         file_menu.addAction(action)
 
         #--------------------
         # Shortcuts.
         
-        shortcuts  = { 'esc': quit, 'ctrl+q': quit, 'ctrl+s': self.save, 'ctrl+z': self.undo, 
+        shortcuts  = { 'ctrl+q': self.close, 'ctrl+s': self.save, 'ctrl+z': self.undo, 
                        'f5': self.reload, 'f': self.toggle_fullscreen, ' ': self.spacebar, 
                        'right': self.next_frame, 'left': lambda:self.next_frame(-1), 
                        'ctrl+right': lambda:self.next_frame(self.tunables['Read one frame in'].value()), 
@@ -481,4 +481,12 @@ class MainWindow(QtWidgets.QMainWindow):
 #        else:
 #            event.ignore()
 #            return
+
+#========================================================
+
+def start_gui(input_dir=None):
+    app = QtWidgets.QApplication(sys.argv)
+    gui = MainWindow(input_dir)
+    gui.show()
+    return app.exec_()    
 

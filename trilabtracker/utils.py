@@ -1,15 +1,15 @@
-import os
 import sys
+import os
+import os.path as osp
 import logging
 import pickle
 import cv2
 import numpy as np
 import pandas as pd
 from fnmatch import fnmatch
-import matplotlib.pyplot as plt
 import screeninfo
 import flatten_dict
-
+import platform
 
 #========================================================
 # Logging.
@@ -163,7 +163,7 @@ def load_filtered_settings(settings_file):
 def apply_filtered_settings(filtered_settings, trial_name):
     settings = {}
     for pattern,settings_ in filtered_settings.items():
-        if fnmatch(trial_name.lower(),pattern.lower()):
+        if pattern=='' or fnmatch(trial_name.lower(),pattern.lower()):
             settings.update(settings_)
     return settings
 
@@ -174,9 +174,11 @@ def load_trial(trial_file):
     with open(trial_file,'rb') as f:
         trial.update(pickle.load(f))
     trial['data'] = trial['data'][:,:trial['n_ind'],:]
-    ellipse = cv2.fitEllipse(trial['tank']['contour'])
-    trial['center'] = np.array(ellipse[0])
-    trial['R_px']   = np.mean(ellipse[1])/2
+    if len(trial['tank']['points'])==1:
+        # If arbitrary tank contour, fit a circle to it.
+        ellipse = cv2.fitEllipse(trial['tank']['contour'])
+        trial['xc'],trial['yc'] = np.array(ellipse[0])
+        trial['R']   = np.mean(ellipse[1])/2
     return trial
 
 # Load a trial file created by ethovision.

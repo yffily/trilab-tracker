@@ -1,32 +1,55 @@
-import sys
-import os
-import logging
-import cv2
-import numpy as np
+import datetime
+import enum
 import numpy.linalg as la
-import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 from scipy.stats import skew
 from .tank import Tank
-from .utils import *
 from .frame import Frame
-import datetime
-import enum
-    
+from .utils import *
+from .gui_main import start_gui
+
+
 # Message to include in the pickled tracking output. 
 info = \
-'''- n_ind is the number of individuals in the trial.
-- n_extra is the number of extra dark/light regions the tracker keeps track of on top of the n_ind one would normally track. Sometimes the tracker mistakes part of the background for an individual, and one of the actual individuals to be tracked gets discarded. Keeping track of additional contours allows to go back and recover the mistakenly discarded data after the fact.
-- data is a numpy array with size (n_frames,n_ind+n_extra,5). The 5 quantities saved for each contour in each frame are: x coordinate, y coordinate, angle with x axis, area, and aspect ratio.'''
+'''n_ind: Number of individuals in the trial.
+n_extra: Number of candidate individuals that were tracked in addition to the n_ind we know are there.
+data: Numpy array with size (n_frames,n_ind+n_extra,5). The 5 quantities saved for each contour in each frame are the x coordinate, y coordinate, angle with x axis, area, and aspect ratio.'''
 
-default_args = dict( t_start = 0, t_end = -1, 
+arg_info = \
+'''
+input_video: Path to the video to track.
+output_dir: Directory where output files will be saved.
+n_ind: Number of individuals in the trial.
+t_start: Timestamp at which to start tracking (in seconds).
+t_stop: Timestamp at which to stop tracking (in seconds).
+n_extra: Number of candidate individuals to track in addition to the n_ind we know are there. When part of the background is mistaken for an individual, the actual individual is lost. Tracking extra contours helps fix that after the fact without retracking from scratch.
+n_report: Number of times to print progress when tracking a video.
+n_blur: Radius of Gaussian blur.
+block_size: Radius or region used in adaptive thresholding.
+threshold_offset: Offset threshold used in thresholding (difference of grayscale value between background and foreground).
+min_area: Minimal area for a contour to qualify as an individual (in pixels).
+max_area: Maximal area for a contour to qualify as an individual (in pixels).
+ideal_area: Approximate area of an individual (in pixels). Used to identify the n_ind best candidate individuals in the first frame.
+max_aspect: Maximal aspect ratio for a contour to qualify as an individual.
+ideal_aspect: Approximate aspect ratio of an individual. Used to identify the n_ind best candidate individuals in the first frame.
+area_penalty: Weight of area changed compared to distance traveled when connecting the candidate individuals found in a frame to the ones found in the previous frame.
+morph_transform: List of morphological transformation to apply after thresholding. Each transformation is given as a pair (cv2 transform, radius). The radius is used to generate a circular kernel.
+reversal_threshold: Minimal distance traveled by an individual against its own orientation over the last 5 frames to reverse said orientation.
+bkg.n_training_frames: Number of frames to average to compute the video's background.
+bkg.t_start: Timestamp at which to start computing the video's background.
+bkg.t_stop: Timestamp at which to stop computing the video's background.
+bkg.contrast_factor: Number by which to multiply the difference between a frame and the background.
+bkg.secondary_subtraction: Whether to perform secondary subtraction, i.e., de-emphasize pixels whose difference with the background is consistently large.
+bkg.secondary_factor: How much to de-emphasize pixels during secondary background subtraction. 
+'''
+
+default_args = dict( t_start = 0, t_end = -1, n_extra = 1, n_report = 100, 
                      n_blur = 3, block_size = 15, threshold_offset = 13, 
                      min_area = 20, max_area = 800, ideal_area = None, 
                      max_aspect = 15, ideal_aspect = None, area_penalty = 1, 
-                     n_extra=1, morph_transform = [], 
-                     reversal_threshold = None, # significant_displacement = None, 
+                     morph_transform = [], reversal_threshold = None, 
+                     # significant_displacement = None, 
                      bkg = dict( n_training_frames = 100, t_start = 0, t_end = -1,
                                  contrast_factor = 5, secondary_subtraction = True,
                                  secondary_factor = 1 )
@@ -44,11 +67,10 @@ class Tracker:
         self.__dict__.update({ k:v for k,v in args.items() if k in default_args.keys() })
         self.bkg['secondary_subtraction'] = bool(self.bkg['secondary_subtraction'])
         
-        # Number of contours to track = number of individuals + n_extra.
-        self.n_track       = self.n_ind+self.n_extra
-         
-        self.trial_file    = os.path.join(output_dir,'trial.pik')
-        self.settings_file = os.path.join(output_dir,'settings.txt')
+        self.n_track       = self.n_ind+self.n_extra # Number of contours to track = number of individuals + n_extra.
+        self.n_report      = 100 # Number of times to report progress when tracking full video.
+        self.trial_file    = osp.join(output_dir,'trial.pik')
+        self.settings_file = osp.join(output_dir,'settings.txt')
         self.colors        = color_list     
         self.min_area      = max(self.min_area,1)
         if self.ideal_area is None:
@@ -69,13 +91,14 @@ class Tracker:
         
 
     def init_directory(self):
-        if not os.path.exists(self.output_dir):
+        if not osp.exists(self.output_dir):
             os.mkdir(self.output_dir)
 
 
     def init_tank(self,img=None,**args):
-        self.tank_file = os.path.join(self.output_dir,'tank.pik')
-        self.tank_img_file = os.path.join(self.output_dir,'tank.png')
+        logging.info(parindent+'Detecting tank')
+        self.tank_file = osp.join(self.output_dir,'tank.pik')
+        self.tank_img_file = osp.join(self.output_dir,'tank.png')
         self.tank = Tank()
         if not self.tank.load(self.tank_file):
             for k,v in args.items():
@@ -89,8 +112,8 @@ class Tracker:
 
 
     def init_background(self):
-        self.bkg_file     = os.path.join(self.output_dir,'background.npz')
-        self.bkg_img_file = os.path.join(self.output_dir,'background.png')
+        self.bkg_file     = osp.join(self.output_dir,'background.npz')
+        self.bkg_img_file = osp.join(self.output_dir,'background.png')
         self.frame.bkg    = self.load_background(self.bkg_file)
         if self.frame.bkg is None:
             self.compute_background()
@@ -99,8 +122,8 @@ class Tracker:
 
 
     def init_secondary_background(self):
-        self.bkg_file2     = os.path.join(self.output_dir,'background2.npz')
-        self.bkg_img_file2 = os.path.join(self.output_dir,'background2.png')
+        self.bkg_file2     = osp.join(self.output_dir,'background2.npz')
+        self.bkg_img_file2 = osp.join(self.output_dir,'background2.png')
         self.frame.bkg2    = self.load_background(self.bkg_file2)
         if self.frame.bkg2 is None:
             self.compute_secondary_background()
@@ -145,6 +168,21 @@ class Tracker:
         self.frame.mask = self.tank.create_mask((self.height,self.width))
 
 
+    def init_video_link(self):
+        ext = osp.splitext(self.input_video)[1]
+        input_link = osp.join(self.output_dir,'raw'+ext)
+        relative_input = osp.relpath(self.input_video, self.output_dir)
+        if not osp.exists(input_link):
+            try:
+                input_link = osp.join(self.output_dir, 'raw'+ext)
+                os.symlink(relative_input, input_link)
+            except:
+    #         if 'windows' in platform.system().lower():
+                input_link = osp.join(self.output_dir, 'raw.txt')
+                with open(input_link, 'r') as fh:
+                    fh.write(relative_input)
+
+
     def init_all(self):
         self.init_directory()
         self.init_video_input()
@@ -154,6 +192,7 @@ class Tracker:
         self.init_tank()
         self.init_tank_mask()
         self.init_tracking_data_structure()
+        self.init_video_link()
 
 
     ############################
@@ -197,8 +236,8 @@ class Tracker:
         
     
     def load_background(self, bkg_file):
-        ext = os.path.splitext(bkg_file)[1]
-        if os.path.exists(bkg_file):
+        ext = osp.splitext(bkg_file)[1]
+        if osp.exists(bkg_file):
             if ext=='.npy':
                 return np.load(bkg_file)
             if ext=='.npz':
@@ -208,7 +247,7 @@ class Tracker:
 
 
     def save_background(self, bkg_file, bkg):
-        ext = os.path.splitext(bkg_file)[1]
+        ext = osp.splitext(bkg_file)[1]
         if ext=='.npy':
             np.save(bkg_file,bkg)
             return True
@@ -216,6 +255,7 @@ class Tracker:
             np.savez_compressed(bkg_file,background=bkg)
             return True
         return False
+
 
     def compute_background(self):
         logging.info(parindent+'Computing background')
@@ -286,6 +326,38 @@ class Tracker:
         self.connect_frames()
         return True
 
+
+    def track_video(self):
+        add_log_file(osp.join(self.output_dir,'log.txt'))
+        logging.info(parindent+'Initializing')
+        self.init_all()
+        self.save_settings()
+        try:
+            logging.info(parindent+'Starting to track')
+            self.set_frame(self.frame_start)
+            i_report = max(1,int((self.frame_end-self.frame_start)/self.n_report))
+            for i_frame in range(self.frame_start, self.frame_end):
+                if (i_frame-self.frame_start)%i_report==0:
+                    self.save_trial()
+                    percent = (i_frame-self.frame_start)/(self.frame_end-self.frame_start)
+                    t = str(datetime.datetime.now()).split('.')
+                    logging.info(parindent + f'Tracking: {self.get_current_timestamp()}, ' +
+                                 f'{self.get_percent_complete():4.1f}% complete, {t[0]}.{t[1][:2]}' )
+                if not self.track_next_frame():
+                    raise Exception(f'Could not read frame {i_frame}.')
+            self.release()
+            logging.info(parindent+'Saving')
+            self.save_trial()
+            logging.info(parindent+'Done')
+            reset_logging()
+            return 0
+        except:
+            self.release()
+            logging.info('Failed')
+            for info in sys.exc_info():
+                logging.warning(info)
+            return 1
+    
 
     #############################
     # Frame-to-frame functions
@@ -414,7 +486,7 @@ class Tracker:
     def init_output_dir(self, output_dir=None):
         if output_dir==None:
             output_dir = self.output_dir
-        if not os.path.exists(output_dir):
+        if not osp.exists(output_dir):
             os.mkdir(output_dir)        
     
 
