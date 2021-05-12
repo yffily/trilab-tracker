@@ -102,7 +102,9 @@ def wait_on_named_window(name,delay=-1):
         delay = 1000000 # wait "forever" ~20 minutes
     for t in range(delay):
         k = cv2.waitKey(1)
-        if cv2.getWindowProperty(name,cv2.WND_PROP_VISIBLE)!=1 or k==esc_key:
+#        if cv2.getWindowProperty(name,cv2.WND_PROP_VISIBLE)!=1:
+#            return -2
+        if k==esc_key:
             return -2
         if k!=-1:
             return k

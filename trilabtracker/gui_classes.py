@@ -1,6 +1,7 @@
 import sys
 import os
 import cv2
+from glob import glob
 import numpy as np
 from . import utils
 from .frame import Frame
@@ -47,7 +48,12 @@ class Track:
         self.settings  = utils.load_settings(self.join('settings.txt'))
         self.settings  = flatten_dict.flatten(self.settings, 'dot')
         
-        input_video    = self.join('raw.avi')
+        input_video    = sorted(glob(self.join('raw.*')))[0]
+        if os.path.splitext(input_video)[1]=='.txt':
+            with open(input_video) as fh:
+                input_video = fh.readline()
+            input_video = self.join(input_video)
+        
         self.cap       = cv2.VideoCapture(input_video)
         self.n_frames  = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         width          = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))

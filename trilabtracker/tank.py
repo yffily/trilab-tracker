@@ -79,13 +79,15 @@ class Tank:
         cv2.setMouseCallback(self.wname, self.process_mouse)
         cv2.imshow(self.wname,self.frame)
         while True:
-            k = wait_on_named_window(self.wname)
+            k = wait_on_named_window(self.wname,2000)
+            print(k)
             if k == -2:
                 self.points  = []
                 self.contour = []
                 self.raw_frame = None
                 self.frame   = None
                 self.wname   = None
+                wait_on_named_window(self.wname,2000)
                 return self.interrupt('Tank detection interrupted.')
             elif k == space_key:
                 if len(self.points)>0: # Accept the current shape.
@@ -199,7 +201,7 @@ class Tank:
                       flags=cv2.FLOODFILL_MASK_ONLY)
         mask = 255*mask[1:-1,1:-1]
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, 
-                                               cv2.CHAIN_APPROX_NONE)
+                                               cv2.CHAIN_APPROX_NONE)[-2:]
         self.contour = contours[-1] if len(contours)>0 else []
         
         if len(self.contour)>0 and self.dilate!=0:
@@ -221,7 +223,7 @@ class Tank:
 #            mask = cv2.erode(mask,kernel)
 
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, 
-                                               cv2.CHAIN_APPROX_NONE)
+                                               cv2.CHAIN_APPROX_NONE)[-2:]
         self.contour = contours[-1] if len(contours)>0 else []
     
 

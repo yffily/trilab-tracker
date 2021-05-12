@@ -179,12 +179,13 @@ class Tracker:
             except:
     #         if 'windows' in platform.system().lower():
                 input_link = osp.join(self.output_dir, 'raw.txt')
-                with open(input_link, 'r') as fh:
+                with open(input_link, 'w') as fh:
                     fh.write(relative_input)
 
 
     def init_all(self):
         self.init_directory()
+        self.init_video_link()
         self.init_video_input()
         self.init_background()
         if self.bkg['secondary_subtraction']:
@@ -192,7 +193,6 @@ class Tracker:
         self.init_tank()
         self.init_tank_mask()
         self.init_tracking_data_structure()
-        self.init_video_link()
 
 
     ############################
