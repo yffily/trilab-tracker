@@ -80,7 +80,6 @@ class Tank:
         cv2.imshow(self.wname,self.frame)
         while True:
             k = wait_on_named_window(self.wname,2000)
-            print(k)
             if k == -2:
                 self.points  = []
                 self.contour = []
