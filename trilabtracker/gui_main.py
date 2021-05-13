@@ -456,7 +456,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track.fix(*fix) #, self.history)
         self.redraw()
     
-    
 #    def video_drag(self,event):
 #        print('drag event')
 #        if event.isStart():

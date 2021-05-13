@@ -14,8 +14,8 @@ import flatten_dict
 
 
 marker_size   = 5
-marker_lw     = 3
-arrow_size    = 10
+marker_lw     = 2
+arrow_size    = 8
 contour_width = 2
 contour_color = (0,255,0) # bgr
 text_color    = (0,255,0) # bgr
@@ -110,7 +110,7 @@ class Track:
                 ux,uy = arrow_size*np.cos(th),arrow_size*np.sin(th)
                 x1,y1,x2,y2 = int(x-ux),int(y-uy),int(x+ux),int(y+uy)
                 cv2.arrowedLine( self.overlay, (x1,y1), (x2,y2), color=color, 
-                                 thickness=marker_lw, tipLength=0.5 )
+                                 thickness=marker_lw, tipLength=0.3 )
 
     def draw_extra(self, xy, color):
         x,y = xy
@@ -170,6 +170,8 @@ class Track:
             i = self.current_frame()-1
         xy = np.array(xy)
         d  = np.hypot(*(self.tracks[i,:,:2]-xy[None,:]).T)
+        if np.all(np.isnan(d)):
+            return None
         j  = np.nanargmin(d)
         return j if d[j]<select_radius else None
 
@@ -194,17 +196,20 @@ class Track:
         self.tracks[i:,[j1,j2]] = self.tracks[i:,[j2,j1]]
     
     # Fill array X between indices i1 and i2 using linear interpolation.
-    def interpolate(self,X,i1,i2):
-        I = np.arange(1,i2-i1)
+    def interpolate(self, X, i1, i2, angle=False):
+        I  = np.arange(1,i2-i1)
+        dx = X[i2]-X[i1]
+        if angle:
+            dx -= 2*np.pi*np.rint(dx/(2*np.pi))
         for i in range(i1+1,i2):
-            X[i] = X[i1] + (X[i2]-X[i1])*(i-i1)/(i2-i1)
+            X[i] = X[i1] + dx*(i-i1)/(i2-i1)
     
     # Interpolate position of fish j from last known position to current frame (i).
     def fix_interpolate_position(self, i, j):
         I = np.nonzero(~np.any(np.isnan(self.tracks[:i,j,:2]), axis=1))[0]
         if len(I)==0 or I[-1]==i-1:
             return False
-        self.interpolate(self.tracks[:,j,:2],I[-1],i)
+        self.interpolate(self.tracks[:,j,:2], I[-1], i)
         return True
 
     # Interpolate orientation of fish j from last known orientation to current frame (i).
@@ -212,7 +217,7 @@ class Track:
         I = np.nonzero(~np.isnan(self.tracks[:i,j,2]))[0]
         if len(I)==0 or I[-1]==i-1:
             return False
-        self.interpolate(self.tracks[:,j,2],I[-1],i)
+        self.interpolate(self.tracks[:,j,2], I[-1], i, angle=True)
         return True
 
     # Delete position of fish j in frame i.
