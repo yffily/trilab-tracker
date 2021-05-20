@@ -179,8 +179,9 @@ def load_trial(trial_file):
     if len(trial['tank']['points'])==1:
         # If arbitrary tank contour, fit a circle to it.
         ellipse = cv2.fitEllipse(trial['tank']['contour'])
-        trial['xc'],trial['yc'] = np.array(ellipse[0])
-        trial['R']   = np.mean(ellipse[1])/2
+#        trial['xc'],trial['yc'] = np.array(ellipse[0])
+        trial['center'] = np.array(ellipse[0])
+        trial['R'] = np.mean(ellipse[1])/2
     return trial
 
 # Load a trial file created by ethovision.
