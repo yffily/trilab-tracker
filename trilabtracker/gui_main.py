@@ -21,6 +21,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs    = SidePanel()
         self.active  = []
         self.history = History()
+        self.config  = Config()
         
         self.timer   = QtCore.QTimer(self)
         self.timer.setInterval(1)
@@ -54,7 +55,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.checkboxes = {}
         for k in [ 'Subtract Background', 'Subtract Secondary Background', 
                    'Apply Tank Mask', 'Threshold', 'Show Contours', 
-                   'Show Fish', 'Show Extra Objects', 'Show Track' ]:
+                   'Show Fish', 'Show Extra Objects', 'Show Track', 'Show Tank' ]:
             self.checkboxes[k] = QtWidgets.QCheckBox(k)
         
         # Create sliders.
@@ -113,7 +114,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Set up 'Tune' tab.
         tab = self.tabs.tune
         for k in [ 'Subtract Background', 'Subtract Secondary Background', 
-                   'Apply Tank Mask', 'Threshold', 'Show Contours' ]:
+                   'Apply Tank Mask', 'Threshold', 'Show Contours', 'Show Tank' ]:
             tab.addWidget(self.checkboxes[k])
         for k in [ 'n_blur', 'block_size', 'threshold_offset', 'min_area', 'max_area', 
                    'ideal_area', 'max_aspect', 'ideal_aspect', 
@@ -126,7 +127,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tab = self.tabs.view
         tab.addLayout(create_legend())
         tab.addWidget(QtWidgets.QLabel(' '))
-        for k in [ 'Show Fish', 'Show Extra Objects', 'Show Track', 'Show Contours' ]:
+        for k in [ 'Show Fish', 'Show Extra Objects', 'Show Track' ]:
             tab.addWidget(self.checkboxes[k])
         tab.addWidget(QtWidgets.QLabel(' '))
         tab.addLayout(create_spinbox_row('Track length (s)'))
@@ -179,6 +180,9 @@ class MainWindow(QtWidgets.QMainWindow):
         action = QtWidgets.QAction('Reload',self)
         action.triggered.connect(self.reload)
         file_menu.addAction(action)
+        action = QtWidgets.QAction('Preferences...',self)
+        action.triggered.connect(self.update_config)
+        file_menu.addAction(action)
         action = QtWidgets.QAction('Exit',self)
         action.triggered.connect(self.close)
         file_menu.addAction(action)
@@ -210,7 +214,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tunables['Track length (s)'].setValue(10)
         self.tunables['Read one frame in'].setValue(5)
         self.reset_tunables()
-        
         self.load()
     
     
@@ -219,16 +222,22 @@ class MainWindow(QtWidgets.QMainWindow):
                                   '.', QtGui.QFileDialog.ShowDirsOnly)
         if input_dir:
             self.input_dir = input_dir
-    
+
     def open(self):
         self.choose_input_dir()
         self.reload()
-    
+
+    def update_config(self, _, dialog=True):
+        if dialog:
+            self.config.dialog()
+        self.track.__dict__.update(self.config.items())
+        self.redraw()
+
     def reload(self):
         self.track = Track(self.input_dir)
         self.redraw()
         self.window().setWindowTitle(self.input_dir)
-    
+
     def save(self, save_tracks=True):
         # Save settings.
         D = self.track.settings.copy()
@@ -243,7 +252,7 @@ class MainWindow(QtWidgets.QMainWindow):
             D['tracks'] = self.track.tracks
         utils.save_pik(self.track.join('gui_fixes.pik'), D)
         utils.save_txt(self.track.join('gui_fixes.txt'), dict(enumerate(self.history.fixes)))
-    
+
     def load(self):
         try:
             # Load settings.
@@ -338,7 +347,8 @@ class MainWindow(QtWidgets.QMainWindow):
         b = self.track.draw( value, track_length, 
                     show_fish=self.checkboxes['Show Fish'].isChecked(), 
                     show_extra=self.checkboxes['Show Extra Objects'].isChecked(),
-                    show_contours=self.checkboxes['Show Contours'].isChecked() )
+                    show_contours=self.checkboxes['Show Contours'].isChecked(), 
+                    show_tank=self.checkboxes['Show Tank'].isChecked() )
         
         if b and self.sliders['alpha'].value()>0:
             alpha = self.sliders['alpha'].value()/100.

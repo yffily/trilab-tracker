@@ -13,14 +13,6 @@ from pyqtgraph.GraphicsScene.mouseEvents import MouseClickEvent, MouseDragEvent
 import flatten_dict
 
 
-marker_size   = 5
-marker_lw     = 2
-arrow_size    = 8
-contour_width = 2
-contour_color = (0,255,0) # bgr
-text_color    = (0,255,0) # bgr
-select_radius = 15
-
 #pyqtgraph.setConfigOption('leftButtonPan', False)
 
 def get_color(i):
@@ -28,9 +20,61 @@ def get_color(i):
 
 #----------------------------------------------------------
 
+class Config():
+    
+    def __init__(self):
+        self.marker_size      = 8
+        self.marker_lw        = 2
+        self.arrow_size       = 8
+        self.arrow_tip_length = 0.5
+        self.line_width       = 1
+        self.select_radius    = 15
+        # Colors in BGR space.
+        self.contour_color    = (0,255,0)
+        self.text_color       = (0,255,0)
+        self.keys = self.__dict__.copy().keys()
+
+    def items(self):
+        return { k:v for k,v in self.__dict__.items() if k in self.keys }
+
+    def dialog(self):
+        dialog = QtGui.QDialog()
+        layout = QtWidgets.QVBoxLayout()
+        widgets = dict( marker_size   = QtWidgets.QSpinBox(), 
+                        marker_lw     = QtWidgets.QSpinBox(), 
+                        arrow_size    = QtWidgets.QSpinBox(), 
+                        arrow_tip_length = QtWidgets.QDoubleSpinBox(), 
+                        line_width = QtWidgets.QSpinBox(), 
+#                        contour_color = QtWidgets.QColorDialog(), 
+#                        text_color    = QtWidgets.QColorDialog(), 
+                        select_radius = QtWidgets.QSpinBox() )
+        for k,w in widgets.items():
+            row = QtWidgets.QHBoxLayout()
+            row.addWidget(QtWidgets.QLabel(k))
+#            if hasattr(w,setRange):
+#                w.setRange(0,1000)
+            if hasattr(w, 'setValue'):
+                w.setValue(self.__dict__[k])
+                def value_changer(value, self=self, k=k):
+                    self.__dict__[k] = value
+                w.valueChanged.connect(value_changer)
+            row.addWidget(w)
+            layout.addLayout(row)
+        button_box = QtGui.QDialogButtonBox(QtGui.QDialogButtonBox.Ok|QtGui.QDialogButtonBox.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        dialog.setLayout(layout)
+#        dialog.exec_()
+        if dialog.exec_():
+            pass
+
+#----------------------------------------------------------
+
 class Track:
 
     def __init__(self, input_dir):
+        self.__dict__.update(Config().items())
         self.join      = lambda path,d=input_dir: os.path.join(d,path)
         trial          = utils.load_pik(self.join('trial.pik'))
         self.load_tracks(trial)
@@ -64,9 +108,9 @@ class Track:
         self.overlay   = np.empty_like(self.bgr)
         self.read_frame()
         
-        tank           = Tank()
-        tank.load(self.join('tank.pik'))
-        self.frame.mask = tank.create_mask((height,width))
+        self.tank      = Tank()
+        self.tank.load(self.join('tank.pik'))
+        self.frame.mask = self.tank.create_mask((height,width))
         
         bkg_file = self.join('background.npz')
         self.frame.bkg  = next(iter(np.load(bkg_file).values()))
@@ -105,20 +149,20 @@ class Track:
         x,y,th = xy_th
         if not (np.isnan(x) or np.isnan(y)):
             if np.isnan(th):
-                cv2.circle(self.overlay, (int(x),int(y)), marker_size, color, marker_lw)
+                cv2.circle(self.overlay, (int(x),int(y)), self.marker_size, color, self.marker_lw)
             else:
-                ux,uy = arrow_size*np.cos(th),arrow_size*np.sin(th)
+                ux,uy = self.arrow_size*np.cos(th),self.arrow_size*np.sin(th)
                 x1,y1,x2,y2 = int(x-ux),int(y-uy),int(x+ux),int(y+uy)
                 cv2.arrowedLine( self.overlay, (x1,y1), (x2,y2), color=color, 
-                                 thickness=marker_lw, tipLength=0.3 )
+                                 thickness=self.marker_lw, tipLength=self.arrow_tip_length )
 
     def draw_extra(self, xy, color):
         x,y = xy
         if not (np.isnan(x) or np.isnan(y)):
             x,y = int(x),int(y)
-            xy = [(x+a*marker_size,y+b*marker_size) for a in [-1,1] for b in [-1,1]]
-            cv2.line(self.overlay, xy[0], xy[3], color, marker_lw)
-            cv2.line(self.overlay, xy[1], xy[2], color, marker_lw)
+            xy = [(x+a*self.marker_size,y+b*self.marker_size) for a in [-1,1] for b in [-1,1]]
+            cv2.line(self.overlay, xy[0], xy[3], color, self.marker_lw)
+            cv2.line(self.overlay, xy[1], xy[2], color, self.marker_lw)
 
     def draw_time(self, show_frame_number, show_timestamp):
         font = cv2.FONT_HERSHEY_SCRIPT_SIMPLEX
@@ -132,12 +176,17 @@ class Track:
             t_str = f'{self.current_frame()}'
             cv2.putText(self.overlay, t_str, (5,y), font, 1, text_color, 2)
 
-    def draw(self, i, track_length, show_fish=True, show_extra=True, 
+    def draw(self, i, track_length, show_fish=True, show_extra=True, show_tank=False, 
              show_contours=False, show_frame_number=False, show_timestamp=False):
         has_overlay = False
         self.overlay.fill(0)
+        if show_tank:
+            self.tank.draw_outline(self.overlay, color=self.contour_color, 
+                                   thickness=self.line_width)
+            has_overlay = True
         if show_contours:
-            cv2.drawContours(self.overlay, self.frame.contours, -1, contour_color, contour_width)
+            cv2.drawContours(self.overlay, self.frame.contours, -1, 
+                             self.contour_color, self.line_width)
             has_overlay = True
         if not (track_length>0 or show_fish or show_extra):
             return has_overlay
@@ -150,7 +199,7 @@ class Track:
                 points = self.tracks[max(0,l-track_length):l+track_length,m,:2]
                 points = points[~np.any(np.isnan(points),axis=1)]
                 points = points.astype(np.int32).reshape((-1,1,2))
-                cv2.polylines(self.overlay, [points], False, color, 1)
+                cv2.polylines(self.overlay, [points], False, color, self.line_width)
                 has_overlay = True
             if show_fish and m<self.n_ind:
                 self.draw_fish(self.tracks[l,m,:3], color)
