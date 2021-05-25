@@ -1,11 +1,13 @@
 
+- [?] Tracker: Change handling of extra objects. First choose the contours most likely to be fish. Only then, connect them to objects in the previous frame.
+
+- Viewer: Put colored rectangles in the frame slider's background to indicate tracking issues. 
+
 - Viewer: Add option to export a video based on current view/settings. Make it possible to pick a frame range.
 
 - Add a "prepare" tab with buttons to compute the background and detect the tank. The latter goes hand-in-hand with porting the current interactive tank detection gui from cv2 to pyqt5+pyqtgraph.
   [May require deep changes, including moving background creation to somewhere it can be shared by the tracker and the viewer.] 
 
 - Figure out how to handle mouse drag in pyqt5+pyqtgraph.
-
-- Fix aspect ratio of cv2 windows in Windows10. This may become obsolete after port to pyqt5+pyqtgraph.
 
 - Pick a third order moment to save at every time step (along with position, angle, area, and aspect ratio) to help identify the front of each fish in post-processing.

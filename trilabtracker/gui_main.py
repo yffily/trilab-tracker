@@ -40,7 +40,7 @@ class MainWindow(QtWidgets.QMainWindow):
         spins  = [ 'n_blur', 'block_size', 'threshold_offset', 'min_area', 'max_area', 
                    'ideal_area', 'Read one frame in' ]
         dspins = [ 'max_aspect', 'ideal_aspect', 'contrast_factor', 
-                   'secondary_factor', 'Track length (s)' ]
+                   'secondary_factor', 'Track length (s)', 'Suspicious Displacement (px)' ]
         # Map settings names to tunables names.
         self.setting2tunable = { 'bkg.secondary_factor':'secondary_factor', 
                                  'bkg.contrast_factor':'contrast_factor' }
@@ -49,6 +49,11 @@ class MainWindow(QtWidgets.QMainWindow):
                                    else QtWidgets.QDoubleSpinBox()
             self.tunables[k].setRange(0,1000)
         self.tunables['Read one frame in'].setRange(-100,100)
+        def suspicious_displacement(value):
+            self.track.bad_displacement = value
+            self.track.locate_bad_frames()
+        self.tunables['Suspicious Displacement (px)'].valueChanged.connect(suspicious_displacement)
+        self.tunables['Suspicious Displacement (px)'].setValue(100)
         self.reset_tunables()
         
         # Create checkboxes.
@@ -142,6 +147,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Set up 'Fix' tab.
         tab = self.tabs.fix
         tab.addLayout(create_legend())
+        tab.addLayout(create_spinbox_row('Suspicious Displacement (px)'))
         tab.addWidget(self.history)
 #        tab.addStretch(1)
         
@@ -178,10 +184,12 @@ class MainWindow(QtWidgets.QMainWindow):
                   'Edit': [ ('Undo Fix', self.undo, 'ctrl+z'), 
                             ('Preferences...', self.update_config, None) ],
                   'View': [ ('Play/Pause', self.spacebar, 'space'),
-                            ('Next Frame', self.next_frame, 'right'),
+                            ('Next Frame', lambda:self.next_frame(1), 'right'),
                             ('Previous Frame', self.previous_frame, 'left'),
-                            ('Skip forward', self.skip_forward, 'ctrl+right'),
-                            ('Skip backward', self.skip_backward, 'ctrl+left'),
+                            ('Skip Forward', self.skip_forward, 'ctrl+right'),
+                            ('Skip Backward', self.skip_backward, 'ctrl+left'),
+                            ('Next Issue', self.next_issue, 'shift+right'),
+                            ('Previous Issue', self.previous_issue, 'shift+left'),
                             ('Toggle Full Screen', self.toggle_fullscreen, 'f') ], 
                             }
         for menu_name,menu_items in menus.items():
@@ -306,10 +314,36 @@ class MainWindow(QtWidgets.QMainWindow):
     def skip_backward(self):
         self.next_frame(-self.tunables['Read one frame in'].value())
 
+    def next_issue(self):
+        i = self.sliders['frame'].value()
+        I = np.nonzero(self.track.bad_frames[i:]>0)[0]
+        if len(I)>0:
+            self.next_frame(I[0]+1)
+        else:
+            self.sliders['frame'].setValue(self.sliders['frame'].maximum())
+
+    def previous_issue(self):
+        i = self.sliders['frame'].value()
+        I = np.nonzero(self.track.bad_frames[:i-1]>0)[0]
+        if len(I)>0:
+            self.next_frame(I[-1]-i+1)
+        else:
+            self.next_frame(1-i)
+
     def redraw(self):
         value = self.sliders['frame'].value()
+        # Change slider handle color to indicate missing track data.
+        b = self.track.bad_frames[value-1]
+        if b==0:
+            self.sliders['frame'].setStyleSheet(None)
+        else:
+            c  =  'red' if b==1 else 'orange'
+            ss = 'QSlider::handle:horizontal {background-color:%s;}'%c
+            self.sliders['frame'].setStyleSheet(ss)
+        # Update the time and frame number.
         t     = (value-1)/self.track.fps
         self.clock.setText(f'Time {t//60:.0f}:{t%60:05.2f} / Frame {value}')
+        # Draw frame.
         if value==self.track.current_frame()+1:
             self.track.read_frame()
         else:
@@ -463,7 +497,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def apply_fixes(self):
         self.track.load_tracks()
         for fix in self.history.fixes:
-            self.track.fix(*fix) #, self.history)
+            self.track.fix(*fix, recompute_bad_frames=False)
+        self.track.locate_bad_frames()
         self.redraw()
     
 #    def video_drag(self,event):

@@ -25,49 +25,54 @@ class Config():
     def __init__(self):
         self.marker_size      = 8
         self.marker_lw        = 2
-        self.arrow_size       = 8
         self.arrow_tip_length = 0.5
         self.line_width       = 1
         self.select_radius    = 15
         # Colors in BGR space.
         self.contour_color    = (0,255,0)
         self.text_color       = (0,255,0)
-        self.keys = self.__dict__.copy().keys()
+        self.keys             = self.__dict__.copy().keys()
 
     def items(self):
         return { k:v for k,v in self.__dict__.items() if k in self.keys }
 
     def dialog(self):
-        dialog = QtGui.QDialog()
-        layout = QtWidgets.QVBoxLayout()
+        dialog  = QtGui.QDialog()
+        layout  = QtWidgets.QGridLayout()
         widgets = dict( marker_size   = QtWidgets.QSpinBox(), 
                         marker_lw     = QtWidgets.QSpinBox(), 
-                        arrow_size    = QtWidgets.QSpinBox(), 
                         arrow_tip_length = QtWidgets.QDoubleSpinBox(), 
-                        line_width = QtWidgets.QSpinBox(), 
+                        line_width    = QtWidgets.QSpinBox(), 
 #                        contour_color = QtWidgets.QColorDialog(), 
 #                        text_color    = QtWidgets.QColorDialog(), 
                         select_radius = QtWidgets.QSpinBox() )
-        for k,w in widgets.items():
-            row = QtWidgets.QHBoxLayout()
-            row.addWidget(QtWidgets.QLabel(k))
-#            if hasattr(w,setRange):
-#                w.setRange(0,1000)
+        widgets['arrow_tip_length'].setSingleStep(0.1)
+        for i,(k,w) in enumerate(widgets.items()):
             if hasattr(w, 'setValue'):
                 w.setValue(self.__dict__[k])
-                def value_changer(value, self=self, k=k):
+                def changed(value, self=self, k=k):
                     self.__dict__[k] = value
-                w.valueChanged.connect(value_changer)
-            row.addWidget(w)
-            layout.addLayout(row)
-        button_box = QtGui.QDialogButtonBox(QtGui.QDialogButtonBox.Ok|QtGui.QDialogButtonBox.Cancel)
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
-        layout.addWidget(button_box)
+                w.valueChanged.connect(changed)
+            layout.addWidget(QtWidgets.QLabel(k), i, 0)
+            layout.addWidget(w, i, 1)
+        button = QtWidgets.QPushButton('Reset')
+        def reset(_, self=self, widgets=widgets):
+            self.__init__()
+            for k,w in widgets.items():
+                if hasattr(w, 'setValue'):
+                    w.setValue(self.__dict__[k])
+        button.clicked.connect(reset)
+        layout.addWidget(button)
+#        button_box = QtGui.QDialogButtonBox(QtGui.QDialogButtonBox.Ok|QtGui.QDialogButtonBox.Cancel)
+#        button_box.accepted.connect(dialog.accept)
+#        button_box.rejected.connect(dialog.reject)
+#        layout.addWidget(button_box)
         dialog.setLayout(layout)
-#        dialog.exec_()
-        if dialog.exec_():
-            pass
+        dialog.exec_()
+#        if dialog.exec_():
+#            for k,w in widgets.items():
+#                if hasattr(w, 'setValue'):
+#                    self.__dict__[k] = w.value()
 
 #----------------------------------------------------------
 
@@ -75,19 +80,30 @@ class Track:
 
     def __init__(self, input_dir):
         self.__dict__.update(Config().items())
-        self.join      = lambda path,d=input_dir: os.path.join(d,path)
-        trial          = utils.load_pik(self.join('trial.pik'))
+        self.join       = lambda path,d=input_dir: os.path.join(d,path)
+        trial           = utils.load_pik(self.join('trial.pik'))
         self.load_tracks(trial)
         self.load_parameters()
     
     def load_tracks(self, trial=None):
         trial = utils.load_pik(self.join('trial.pik')) if trial is None else trial
-        self.fps       = trial['fps']
-        self.frames    = trial['frame_list']
-        self.tracks    = trial['data']
-        self.n_ind     = trial['n_ind']
-        self.n_tracks  = self.tracks.shape[1]
-        
+        self.fps        = trial['fps']
+        self.frames     = trial['frame_list']
+        self.tracks     = trial['data']
+        self.n_ind      = trial['n_ind']
+        self.n_tracks   = self.tracks.shape[1]
+        self.bad_frames = np.zeros(len(self.frames), dtype=np.int8)
+    
+    def locate_bad_frames(self):
+        X = self.tracks[:,:self.n_ind,:3]
+        if not self.bad_displacement is None:
+            dX = X[1:,:,:2]-X[:-1,:,:2]
+            dX[np.isnan(dX)] = 0
+            I = np.nonzero(np.any(np.sum(dX**2, axis=2)>self.bad_displacement**2, axis=1))[0]
+            self.bad_frames[I+1] = 2
+        I = np.nonzero(np.any(np.isnan(X), axis=(1,2)))
+        self.bad_frames[I] = 1
+    
     def load_parameters(self):
         self.settings  = utils.load_settings(self.join('settings.txt'))
         self.settings  = flatten_dict.flatten(self.settings, 'dot')
@@ -151,7 +167,7 @@ class Track:
             if np.isnan(th):
                 cv2.circle(self.overlay, (int(x),int(y)), self.marker_size, color, self.marker_lw)
             else:
-                ux,uy = self.arrow_size*np.cos(th),self.arrow_size*np.sin(th)
+                ux,uy = self.marker_size*np.cos(th),self.marker_size*np.sin(th)
                 x1,y1,x2,y2 = int(x-ux),int(y-uy),int(x+ux),int(y+uy)
                 cv2.arrowedLine( self.overlay, (x1,y1), (x2,y2), color=color, 
                                  thickness=self.marker_lw, tipLength=self.arrow_tip_length )
@@ -277,12 +293,14 @@ class Track:
     def fix_delete_orientation(self, i, j):
         self.tracks[i,j,2] = np.nan
 
-    def fix(self, *fix, history=None):
+    def fix(self, *fix, history=None, recompute_bad_frames=True):
         i = self.current_frame()-1 if fix[1] is None else fix[1]
         fix = fix[:1] + (i,) + fix[2:]
         getattr(self,'fix_'+fix[0])(*fix[1:])
         if not history is None:
             history.add_fix(fix)
+        if recompute_bad_frames:
+            self.locate_bad_frames()
 
 #----------------------------------------------------------
 
