@@ -170,11 +170,11 @@ class Track:
         if show_timestamp:
             m,s   = self.current_timestamp()
             t_str = f'{m:02.0f}:{s:05.2f}'
-            cv2.putText(self.overlay, t_str, (5,y), font, 1, text_color, 2)
+            cv2.putText(self.overlay, t_str, (5,y), font, 1, self.text_color, 2)
             y += 30
         if show_frame_number:
             t_str = f'{self.current_frame()}'
-            cv2.putText(self.overlay, t_str, (5,y), font, 1, text_color, 2)
+            cv2.putText(self.overlay, t_str, (5,y), font, 1, self.text_color, 2)
 
     def draw(self, i, track_length, show_fish=True, show_extra=True, show_tank=False, 
              show_contours=False, show_frame_number=False, show_timestamp=False):
@@ -222,7 +222,7 @@ class Track:
         if np.all(np.isnan(d)):
             return None
         j  = np.nanargmin(d)
-        return j if d[j]<select_radius else None
+        return j if d[j]<self.select_radius else None
 
 #    # TODO: Use a decorator to log fixes.
 #    def fix_decorator(fix_name):

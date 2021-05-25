@@ -98,7 +98,7 @@ class Tracker:
     def init_tank(self,img=None,**args):
         logging.info(parindent+'Detecting tank')
         self.tank_file = osp.join(self.output_dir,'tank.pik')
-        self.tank_img_file = osp.join(self.output_dir,'tank.png')
+#        self.tank_img_file = osp.join(self.output_dir,'tank.png')
         self.tank = Tank()
         if not self.tank.load(self.tank_file):
             for k,v in args.items():
@@ -108,27 +108,27 @@ class Tracker:
                 or ( (not b) and self.tank.locate(self.frame.bkg.astype(np.uint8), \
                                                   self.input_video) ):
                 self.tank.save(self.tank_file)
-                self.tank.save_img(self.tank_img_file)
+#                self.tank.save_img(self.tank_img_file)
 
 
     def init_background(self):
         self.bkg_file     = osp.join(self.output_dir,'background.npz')
-        self.bkg_img_file = osp.join(self.output_dir,'background.png')
+#        self.bkg_img_file = osp.join(self.output_dir,'background.png')
         self.frame.bkg    = self.load_background(self.bkg_file)
         if self.frame.bkg is None:
             self.compute_background()
             self.save_background(self.bkg_file,self.frame.bkg)
-            cv2.imwrite(self.bkg_img_file,self.frame.bkg)
+#            cv2.imwrite(self.bkg_img_file,self.frame.bkg)
 
 
     def init_secondary_background(self):
         self.bkg_file2     = osp.join(self.output_dir,'background2.npz')
-        self.bkg_img_file2 = osp.join(self.output_dir,'background2.png')
+#        self.bkg_img_file2 = osp.join(self.output_dir,'background2.png')
         self.frame.bkg2    = self.load_background(self.bkg_file2)
         if self.frame.bkg2 is None:
             self.compute_secondary_background()
             self.save_background(self.bkg_file2, self.frame.bkg2)
-        cv2.imwrite(self.bkg_img_file2, 255-self.frame.bkg2)
+#        cv2.imwrite(self.bkg_img_file2, 255-self.frame.bkg2)
         self.frame.bkg2 *= self.bkg['secondary_factor'] * self.bkg['contrast_factor']
 
 

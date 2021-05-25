@@ -168,39 +168,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(self.input_dir)
         
         #--------------------
-        # Menu bar.
+        # Menu bar and shortcuts.
         
         menubar = self.menuBar()
-        file_menu = menubar.addMenu('File')
-        self.file_dialog = QtWidgets.QFileDialog()
-        self.file_dialog.setFileMode(QtWidgets.QFileDialog.AnyFile)
-        action = QtWidgets.QAction('Open...',self)
-        action.triggered.connect(self.open)
-        file_menu.addAction(action)
-        action = QtWidgets.QAction('Reload',self)
-        action.triggered.connect(self.reload)
-        file_menu.addAction(action)
-        action = QtWidgets.QAction('Preferences...',self)
-        action.triggered.connect(self.update_config)
-        file_menu.addAction(action)
-        action = QtWidgets.QAction('Exit',self)
-        action.triggered.connect(self.close)
-        file_menu.addAction(action)
-
-        #--------------------
-        # Shortcuts.
-        
-        shortcuts  = { 'ctrl+q': self.close, 'ctrl+s': self.save, 'ctrl+z': self.undo, 
-                       'f5': self.reload, 'f': self.toggle_fullscreen, ' ': self.spacebar, 
-                       'right': self.next_frame, 'left': lambda:self.next_frame(-1), 
-                       'ctrl+right': lambda:self.next_frame(self.tunables['Read one frame in'].value()), 
-                       'ctrl+left': lambda:self.next_frame(-self.tunables['Read one frame in'].value()), 
-#                       'i+p': lambda:self.interpolate('position'),  
-#                       'i+o': lambda:self.interpolate('orientation'),  
-                     }
-        for key,action in shortcuts.items():
-            shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(key), self)
-            shortcut.activated.connect(action)
+        menus = { 'File': [ ('Open...', self.open, None), 
+                            ('Reload', self.reload, 'f5'), 
+                            ('Save', self.save, 'ctrl+s'), 
+                            ('Exit', self.close, 'ctrl+q') ],
+                  'Edit': [ ('Undo Fix', self.undo, 'ctrl+z'), 
+                            ('Preferences...', self.update_config, None) ],
+                  'View': [ ('Play/Pause', self.spacebar, 'space'),
+                            ('Next Frame', self.next_frame, 'right'),
+                            ('Previous Frame', self.previous_frame, 'left'),
+                            ('Skip forward', self.skip_forward, 'ctrl+right'),
+                            ('Skip backward', self.skip_backward, 'ctrl+left'),
+                            ('Toggle Full Screen', self.toggle_fullscreen, 'f') ], 
+                            }
+        for menu_name,menu_items in menus.items():
+            menu = menubar.addMenu(menu_name)
+            for name,function,shortcut in menu_items:
+                action = QtWidgets.QAction(name,self)
+                action.triggered.connect(function)
+                if not shortcut is None:
+                    action.setShortcut(QtGui.QKeySequence(shortcut))
+                menu.addAction(action)
         
         #--------------------
         # Starting options.
@@ -306,6 +297,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # Move to next frame.
         self.sliders['frame'].setValue(self.sliders['frame'].value()+skip)
     
+    def previous_frame(self):
+        self.next_frame(-1)
+    
+    def skip_forward(self):
+        self.next_frame(self.tunables['Read one frame in'].value())
+
+    def skip_backward(self):
+        self.next_frame(-self.tunables['Read one frame in'].value())
+
     def redraw(self):
         value = self.sliders['frame'].value()
         t     = (value-1)/self.track.fps
