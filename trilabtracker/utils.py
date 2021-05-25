@@ -3,6 +3,7 @@ import os
 import os.path as osp
 import logging
 import pickle
+import re
 import cv2
 import numpy as np
 import pandas as pd
@@ -212,6 +213,39 @@ def load_trial_ethovision(trial_file):
               ['n_ind', 'time', 'data', 'fps', 'info'] }
     
     return trial
+
+# Analyze tracking output to determine tracking status (including % complete).
+def tracking_status(trial_dir):
+    name  = os.path.basename(trial_dir)
+    if not os.path.isdir(trial_dir):
+        return dict(name=name, status='not found')
+    in_trial_dir   = lambda x: os.path.join(trial_dir,x)
+    has_tank       = os.path.exists(in_trial_dir('tank.pik'))
+    has_background = os.path.exists(in_trial_dir('background.npz'))
+    has_trial      = os.path.exists(in_trial_dir('trial.pik'))
+    try:
+        with open(in_trial_dir('settings.txt')) as f:
+            settings = [ [x.strip() for x in line.split('=')] for line in f.readlines() ]
+    except:
+        settings = None
+    try:
+        with open(in_trial_dir('log.txt')) as f:
+            log = [ line.strip() for line in f.readlines() ]
+        if 'Failed' in log:
+            status = 'failed'
+        elif log[-1] == 'Done':
+            status = 'complete'
+        else:
+            progress = [ line.strip() for line in log if 'Tracking' in line ]
+            if len(progress)==0:
+                status = 'tracking (0%)'
+            else:
+                percent = re.findall('[\d.]*%',progress[-1])[0]
+                status  = f'tracking ({percent})'
+    except:
+        status = 'no log'
+    return { k:v for k,v in locals().items() if not k in ['f','in_trial_dir','progress'] }
+
 
 #========================================================
 # Plotting.
