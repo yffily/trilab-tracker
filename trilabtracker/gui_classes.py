@@ -116,17 +116,17 @@ class Track:
         
         self.cap       = cv2.VideoCapture(input_video)
         self.n_frames  = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        width          = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height         = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.frame     = Frame((height,width))
+        self.width     = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.height    = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.frame     = Frame((self.height,self.width))
         self.frame.contrast_factor = self.settings['bkg.contrast_factor']
-        self.bgr       = np.empty(shape=(height,width,3), dtype=np.uint8)
+        self.bgr       = np.empty(shape=(self.height,self.width,3), dtype=np.uint8)
         self.overlay   = np.empty_like(self.bgr)
         self.read_frame()
         
         self.tank      = Tank()
         self.tank.load(self.join('tank.pik'))
-        self.frame.mask = self.tank.create_mask((height,width))
+        self.frame.mask = self.tank.create_mask((self.height,self.width))
         
         bkg_file = self.join('background.npz')
         self.frame.bkg  = next(iter(np.load(bkg_file).values()))
@@ -180,6 +180,12 @@ class Track:
             cv2.line(self.overlay, xy[0], xy[3], color, self.marker_lw)
             cv2.line(self.overlay, xy[1], xy[2], color, self.marker_lw)
 
+    def draw_scale_bar(self, length_px, pad=10):
+        x,y,l,w = pad,self.height-pad,int(length_px),int(2*self.marker_lw)
+        cv2.line(self.overlay, (x,y), (x+l,y), self.text_color, self.marker_lw)
+        cv2.line(self.overlay, (x,y-w), (x,y+w), self.text_color, self.marker_lw)
+        cv2.line(self.overlay, (x+l,y-w), (x+l,y+w), self.text_color, self.marker_lw)
+
     def draw_time(self, show_frame_number, show_timestamp):
         font = cv2.FONT_HERSHEY_SCRIPT_SIMPLEX
         y = 30
@@ -193,7 +199,7 @@ class Track:
             cv2.putText(self.overlay, t_str, (5,y), font, 1, self.text_color, 2)
 
     def draw(self, i, track_length, show_fish=True, show_extra=True, show_tank=False, 
-             show_contours=False, show_frame_number=False, show_timestamp=False):
+             show_contours=False, show_frame_number=False, show_timestamp=False, scale_bar=None):
         has_overlay = False
         self.overlay.fill(0)
         if show_tank:
@@ -225,6 +231,9 @@ class Track:
                 has_overlay = True
         if show_frame_number or show_timestamp:
             self.draw_time(show_frame_number, show_timestamp)
+            has_overlay = True
+        if not scale_bar is None:
+            self.draw_scale_bar(scale_bar)
             has_overlay = True
         # Return True if an overlay was created.
         return has_overlay

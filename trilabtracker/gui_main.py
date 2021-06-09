@@ -58,9 +58,9 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Create checkboxes.
         self.checkboxes = {}
-        for k in [ 'Subtract Background', 'Subtract Secondary Background', 
-                   'Apply Tank Mask', 'Threshold', 'Show Contours', 
-                   'Show Fish', 'Show Extra Objects', 'Show Track', 'Show Tank' ]:
+        for k in [ 'Subtract Background', 'Subtract Secondary Background', 'Apply Tank Mask', 
+                   'Threshold', 'Show Contours', 'Show Fish', 'Show Extra Objects', 
+                   'Show Track', 'Show Tank', 'Show Suspicious Displacement' ]:
             self.checkboxes[k] = QtWidgets.QCheckBox(k)
         
         # Create sliders.
@@ -148,6 +148,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tab = self.tabs.fix
         tab.addLayout(create_legend())
         tab.addLayout(create_spinbox_row('Suspicious Displacement (px)'))
+        tab.addWidget(self.checkboxes['Show Suspicious Displacement'])
         tab.addWidget(self.history)
 #        tab.addStretch(1)
         
@@ -383,6 +384,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     show_extra=self.checkboxes['Show Extra Objects'].isChecked(),
                     show_contours=self.checkboxes['Show Contours'].isChecked(), 
                     show_tank=self.checkboxes['Show Tank'].isChecked() )
+        if self.checkboxes['Show Suspicious Displacement'].isChecked():
+            self.track.draw_scale_bar(int(self.tunables['Suspicious Displacement (px)'].value()))
+            
+            b = True
         
         if b and self.sliders['alpha'].value()>0:
             alpha = self.sliders['alpha'].value()/100.

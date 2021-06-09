@@ -171,7 +171,7 @@ def apply_filtered_settings(filtered_settings, trial_name):
     return settings
 
 # Load a trial file created by trilab-tracker.
-def load_trial(trial_file):
+def load_trial(trial_file, load_fixes=True):
     trial_dir  = os.path.dirname(trial_file)
     trial      = { 'trial_dir':trial_dir }
     with open(trial_file,'rb') as f:
@@ -183,6 +183,9 @@ def load_trial(trial_file):
 #        trial['xc'],trial['yc'] = np.array(ellipse[0])
         trial['center'] = np.array(ellipse[0])
         trial['R'] = np.mean(ellipse[1])/2
+    fixes_file = osp.join(trial_dir, 'gui_fixes.pik')
+    if load_fixes and osp.exists(fixes_file):
+        trial['data'] = load_pik(fixes_file)['tracks'][:,:trial['n_ind'],:]
     return trial
 
 # Load a trial file created by ethovision.
