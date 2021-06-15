@@ -180,9 +180,9 @@ def load_trial(trial_file, load_fixes=True):
     if len(trial['tank']['points'])==1:
         # If arbitrary tank contour, fit a circle to it.
         ellipse = cv2.fitEllipse(trial['tank']['contour'])
-#        trial['xc'],trial['yc'] = np.array(ellipse[0])
-        trial['center'] = np.array(ellipse[0])
-        trial['R'] = np.mean(ellipse[1])/2
+        trial['tank']['xc'],trial['tank']['yc'] = np.array(ellipse[0])
+#        trial['center'] = np.array(ellipse[0])
+        trial['tank']['R'] = np.mean(ellipse[1])/2
     fixes_file = osp.join(trial_dir, 'gui_fixes.pik')
     if load_fixes and osp.exists(fixes_file):
         trial['data'] = load_pik(fixes_file)['tracks'][:,:trial['n_ind'],:]
