@@ -95,6 +95,7 @@ class Track:
         self.bad_frames = np.zeros(len(self.frames), dtype=np.int8)
     
     def locate_bad_frames(self):
+        self.bad_frames[:] = 0
         X = self.tracks[:,:self.n_ind,:3]
         if not self.bad_displacement is None:
             dX = X[1:,:,:2]-X[:-1,:,:2]

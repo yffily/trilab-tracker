@@ -53,7 +53,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track.bad_displacement = value
             self.track.locate_bad_frames()
         self.tunables['Suspicious Displacement (px)'].valueChanged.connect(suspicious_displacement)
-        self.tunables['Suspicious Displacement (px)'].setValue(100)
+        self.tunables['Suspicious Displacement (px)'].setValue(50)
         self.reset_tunables()
         
         # Create checkboxes.
@@ -387,7 +387,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     show_tank=self.checkboxes['Show Tank'].isChecked() )
         if self.checkboxes['Show Suspicious Displacement'].isChecked():
             self.track.draw_scale_bar(int(self.tunables['Suspicious Displacement (px)'].value()))
-            
             b = True
         
         if b and self.sliders['alpha'].value()>0:
