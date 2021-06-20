@@ -321,7 +321,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(I)>0:
             self.next_frame(I[0]+1)
         else:
-            self.sliders['frame'].setValue(self.sliders['frame'].maximum())
+            i = min(self.sliders['frame'].maximum(), len(self.track.bad_frames)+1)
+            self.sliders['frame'].setValue(i)
 
     def previous_issue(self):
         i = self.sliders['frame'].value()
@@ -334,11 +335,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def redraw(self):
         value = self.sliders['frame'].value()
         # Change slider handle color to indicate missing track data.
-        b = self.track.bad_frames[value-1]
+        b = self.track.bad_frames[value-1] if value<=len(self.track.bad_frames) else 3 # 3=not tracked yet
         if b==0:
             self.sliders['frame'].setStyleSheet(None)
         else:
-            c  =  'red' if b==1 else 'orange'
+            c  =  ['red','orange','yellow'][b-1]
             ss = 'QSlider::handle:horizontal {background-color:%s;}'%c
             self.sliders['frame'].setStyleSheet(ss)
         # Update the time and frame number.
