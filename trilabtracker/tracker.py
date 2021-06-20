@@ -170,17 +170,22 @@ class Tracker:
 
     def init_video_link(self):
         ext = osp.splitext(self.input_video)[1]
-        input_link = osp.join(self.output_dir,'raw'+ext)
+        # Create a symbolic link to the input video and a text file containing
+        # the path the the video, which serves as a backup link. The symbolic 
+        # link gives direct access to the video, but doesn't work in windows. 
+        # The text file ensure the viewer can locate the video either way.
         relative_input = osp.relpath(self.input_video, self.output_dir)
+        input_link = osp.join(self.output_dir, 'raw.txt')
         if not osp.exists(input_link):
-            try:
+            with open(input_link, 'w') as fh:
+                fh.write(relative_input)
+        try:
+            input_link = osp.join(self.output_dir,'raw'+ext)
+            if not osp.exists(input_link):
                 input_link = osp.join(self.output_dir, 'raw'+ext)
                 os.symlink(relative_input, input_link)
-            except:
-    #         if 'windows' in platform.system().lower():
-                input_link = osp.join(self.output_dir, 'raw.txt')
-                with open(input_link, 'w') as fh:
-                    fh.write(relative_input)
+        except:
+            pass
 
 
     def init_all(self):

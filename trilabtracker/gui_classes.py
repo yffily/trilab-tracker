@@ -105,14 +105,14 @@ class Track:
         self.bad_frames[I] = 1
     
     def load_parameters(self):
-        self.settings  = utils.load_settings(self.join('settings.txt'))
-        self.settings  = flatten_dict.flatten(self.settings, 'dot')
+        self.settings = utils.load_settings(self.join('settings.txt'))
+        self.settings = flatten_dict.flatten(self.settings, 'dot')
         
-        input_video    = sorted(glob(self.join('raw.*')))[0]
-        if os.path.splitext(input_video)[1]=='.txt':
-            with open(input_video) as fh:
-                input_video = fh.readline()
-            input_video = self.join(input_video)
+        # Load the video. Always use the txt link, which works in windows as well.
+        input_video = self.join('raw.txt')
+        with open(input_video) as fh:
+            input_video = fh.readline()
+        input_video = self.join(input_video)
         
         self.cap       = cv2.VideoCapture(input_video)
         self.n_frames  = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
