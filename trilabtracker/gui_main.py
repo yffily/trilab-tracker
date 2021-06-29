@@ -317,20 +317,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def next_issue(self):
         i = self.sliders['frame'].value()
-        I = np.nonzero(self.track.bad_frames[i:]>0)[0]
+        B = self.track.bad_frames[i:]>0
+        I = np.nonzero(B[1:]&~B[:-1])[0] # Start indices of bad frame ranges after i.
         if len(I)>0:
-            self.next_frame(I[0]+1)
+            self.next_frame(I[0]+2)
         else:
             i = min(self.sliders['frame'].maximum(), len(self.track.bad_frames)+1)
             self.sliders['frame'].setValue(i)
 
     def previous_issue(self):
         i = self.sliders['frame'].value()
-        I = np.nonzero(self.track.bad_frames[:i-1]>0)[0]
-        if len(I)>0:
-            self.next_frame(I[-1]-i+1)
+        B = self.track.bad_frames[:i]>0
+        I = np.nonzero(B[1:]&~B[:-1])[0] # Start indices of bad frame ranges before i. 
+        b = self.track.bad_frames[i]>0 # True if current frame is bad.
+        if b and B[-1] and len(I)>1:
+            self.next_frame(I[-2]-i+2)
+        elif (not b) and len(I)>0:
+            self.next_frame(I[-1]-i+2)
         else:
-            self.next_frame(1-i)
+            self.next_frame(2-i)
 
     def redraw(self):
         value = self.sliders['frame'].value()
