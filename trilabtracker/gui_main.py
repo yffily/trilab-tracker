@@ -488,6 +488,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.history.remove_fix(self.history.row(item))
                 self.apply_fixes()
             return
+        if Qt.Key_0<=event.key()<=Qt.Key_9:
+            j = (event.key()-Qt.Key_1)%10
+            if j<self.track.n_tracks:
+                self.select_fish(j)
 
     def keyReleaseEvent(self,event):
         if event.key() in self.keys_down.keys():
