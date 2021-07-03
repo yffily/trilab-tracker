@@ -303,12 +303,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.buttons['play'].isChecked():
             self.buttons['play'].toggle()
             self.play_pause()
+        # If holding "d", delete position and orientation of selected fish from
+        # current to next frame (including frames in between if abs(skip)>1).
+        i0 = self.sliders['frame'].value()
+        if self.keys_down[Qt.Key_D]:
+            for j in self.active:
+                for i in range(abs(skip)):
+                    self.track.fix('delete_position', i0+np.sign(skip)*i-1, j, history=self.history)
         # Move to next frame.
-        self.sliders['frame'].setValue(self.sliders['frame'].value()+skip)
-    
+        self.sliders['frame'].setValue(i0+skip)
+
     def previous_frame(self):
         self.next_frame(-1)
-    
+
     def skip_forward(self):
         self.next_frame(self.tunables['Read one frame in'].value())
 
@@ -316,26 +323,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self.next_frame(-self.tunables['Read one frame in'].value())
 
     def next_issue(self):
-        i = self.sliders['frame'].value()
+        i = self.sliders['frame'].value()-1
         B = self.track.bad_frames[i:]>0
         I = np.nonzero(B[1:]&~B[:-1])[0] # Start indices of bad frame ranges after i.
         if len(I)>0:
-            self.next_frame(I[0]+2)
-        else:
-            i = min(self.sliders['frame'].maximum(), len(self.track.bad_frames)+1)
-            self.sliders['frame'].setValue(i)
+            return self.next_frame(I[0]+1)
+        i2 = min(self.sliders['frame'].maximum()-1, len(self.track.bad_frames))
+        return self.next_frame(i2-i)
 
     def previous_issue(self):
-        i = self.sliders['frame'].value()
+        i = self.sliders['frame'].value()-1
         B = self.track.bad_frames[:i]>0
-        I = np.nonzero(B[1:]&~B[:-1])[0] # Start indices of bad frame ranges before i. 
-        b = self.track.bad_frames[i]>0 # True if current frame is bad.
-        if b and B[-1] and len(I)>1:
-            self.next_frame(I[-2]-i+2)
-        elif (not b) and len(I)>0:
-            self.next_frame(I[-1]-i+2)
-        else:
-            self.next_frame(2-i)
+        I = np.nonzero(B[1:]&~B[:-1])[0] # Start indices of bad frame ranges before i.
+#        # If inside a group of bad frames, jump to the beginning of the previous 
+#        # distinct issue rather than jumping to the beginning of the current issue.
+#        if i<len(self.track.bad_frames) and self.track.bad_frames[i]>0 and B[-1] and len(I)>1:
+#            return self.next_frame(I[-2]-i+1)
+        # If current frame is past the last tracked frame, jump to the first untracked frame.
+        n = len(self.track.bad_frames)
+        if i>n:
+            return self.next_frame(n-i)
+        # Jump to the last bad frame following a good frame. If currently in the middle of a
+        # group of bad frame, this jumps to the beginning of beginning of this ongoing issue.
+        if len(I)>0:
+            return self.next_frame(I[-1]-i+1)
+        return self.next_frame(-i)
 
     def redraw(self):
         value = self.sliders['frame'].value()
