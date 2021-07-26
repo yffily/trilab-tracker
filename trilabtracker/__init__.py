@@ -1,3 +1,3 @@
 from .tracker import *
 
-__all__ = [ 'frame', 'gui_classes', 'gui_main', 'tank', 'utils' ]
+__all__ = [ 'fixer', 'utils', 'tank', 'frame', 'tracker', 'gui_classes', 'gui_main' ]

@@ -11,6 +11,7 @@ from fnmatch import fnmatch
 import screeninfo
 import flatten_dict
 import platform
+from . import fixer
 
 #========================================================
 # Logging.
@@ -172,11 +173,10 @@ def apply_filtered_settings(filtered_settings, trial_name):
 
 # Load a trial file created by trilab-tracker.
 def load_trial(trial_file, load_fixes=True):
-    trial_dir  = os.path.dirname(trial_file)
+    trial_dir  = osp.dirname(trial_file)
     trial      = { 'trial_dir':trial_dir }
     with open(trial_file,'rb') as f:
         trial.update(pickle.load(f))
-    trial['data'] = trial['data'][:,:trial['n_ind'],:]
     if len(trial['tank']['points'])==1:
         # If arbitrary tank contour, fit a circle to it.
         ellipse = cv2.fitEllipse(trial['tank']['contour'])
@@ -185,8 +185,13 @@ def load_trial(trial_file, load_fixes=True):
         trial['tank']['R'] = np.mean(ellipse[1])/2
     fixes_file = osp.join(trial_dir, 'gui_fixes.pik')
     if load_fixes and osp.exists(fixes_file):
-        trial['data'] = load_pik(fixes_file)['tracks'][:,:trial['n_ind'],:]
+        fixes = load_pik(osp.join(trial_dir,'gui_fixes.pik'))['fixes']
+        for fix in fixes:
+            fixer.fix(trial['data'], *fix)
+    trial['data'] = trial['data'][:,:trial['n_ind'],:]
     return trial
+
+bla = 5
 
 # Load a trial file created by ethovision.
 def load_trial_ethovision(trial_file):
