@@ -26,30 +26,31 @@ from . import utils
 #     return (np.copysign(a * tx, xy[0]), np.copysign(b * ty, xy[1]))    
 
 def compute_kinematics(trial, wall_distance=False):
-    center      = np.array([trial['tank']['xc'],trial['tank']['yc']])
-    px2cm       = trial['R_cm']/trial['tank']['R']
-    n           = trial['n_ind']
-    pos         = trial['data'][:,:n,:3].copy() # discard extra objects
+    tank,R_cm,n_ind,data,time = map(trial.get,['tank','R_cm','n_ind','data','time'])
+    center      = np.array([tank['xc'],tank['yc']])
+    px2cm       = R_cm/tank['R']
+    n           = n_ind
+    pos         = data[:,:n,:3].copy() # discard extra objects
     pos[:,:,:2] = (pos[:,:,:2]-center[None,None,:])*px2cm # convert to centimeters
     pos[:,:,1]  = -pos[:,:,1] # flip y axis
     for j in range(n): # unwrap orientations
         I          = ~np.isnan(pos[:,j,2])
         pos[I,j,2] = np.unwrap(pos[I,j,2])
-    time        = trial['frame_list']/trial['fps']
     vel         = np.gradient(pos,time,axis=0)
     acc         = np.gradient(vel,time,axis=0)
     v           = np.hypot(vel[:,:,0],vel[:,:,1])
-    d_wall      = trial['R_cm'] - np.hypot(pos[:,:,0],pos[:,:,1])
+    d_wall      = R_cm - np.hypot(pos[:,:,0],pos[:,:,1])
 # #     dist    = lambda xy: dist2ellipse(*ellipse[1],xy)
-#     dist    = lambda xy: cv2.pointPolygonTest(trial['tank']['contour'],tuple(xy),True)
+#     dist    = lambda xy: cv2.pointPolygonTest(tank['contour'],tuple(xy),True)
 #     d_wall  = px2cm * np.apply_along_axis(dist,2,trial['data'][:,:,:2])
     trial.update({ k:v for k,v in locals().items() if k in 
                    ['time', 'pos', 'vel', 'acc', 'd_wall', 'v'] })
     return trial
 
 def compute_cuts(trial,ranges):
-    globals().update(trial)
+#    globals().update(trial)
     # valid array: axis 0 = time, axis 1 = [nan_xy,nan_any,d_wall,v,v_ang,final]
+    pos,vel,acc,v = map(trial.get,['pos','vel','acc','v'])
     valid  = np.full(pos.shape[:2]+(6,),np.True_,dtype=np.bool_)
     valid[:,:,0] = np.logical_not(np.any(np.isnan(pos),axis=2))
     valid[:,:,1] = np.logical_not(np.any(np.isnan(vel),axis=2))
@@ -69,15 +70,14 @@ def compute_cuts(trial,ranges):
     return trial
 
 def apply_cuts(trial):
-    globals().update(trial)
     for k in 'data','vel','acc','v':
         trial[k][~valid[:,:,6]] = np.nan
     return trial
 
 default_cut_ranges = dict( v=[0,np.inf], v_ang=[-np.inf,np.inf] )
 
-def preprocess_trial(trial, cut_ranges=None):
-    trial.update(utils.load_trial(trial['trial_file']))
+def preprocess_trial(trial, cut_ranges=None, load_timestamps=True):
+    trial.update(utils.load_trial(trial['trial_file'], load_timestamps=load_timestamps))
     trial = compute_kinematics(trial)
     if not cut_ranges is None:
         ranges = copy(default_cut_ranges)

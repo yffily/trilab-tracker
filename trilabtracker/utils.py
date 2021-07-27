@@ -2,6 +2,7 @@ import sys
 import os
 import os.path as osp
 import logging
+import traceback
 import pickle
 import re
 import cv2
@@ -11,6 +12,7 @@ from fnmatch import fnmatch
 import screeninfo
 import flatten_dict
 import platform
+import openpyxl
 from . import fixer
 
 #========================================================
@@ -65,6 +67,10 @@ def reset_logging():
     logging.root.addHandler(logging.NullHandler())
 #    for h in logging.root.handlers:
 #        logging.root.removeHandler(h)
+
+def set_log_level(lvl):
+    for h in logging.root.handlers:
+        h.setLevel(lvl)
 
 def overprint(msg):
     print('\r'+' '*200+f'\r{msg}', end='')
@@ -180,20 +186,28 @@ def locate_timestamps(path):
     # Make fn relative to current dir rather than trial_dir.
     fn = osp.join(osp.relpath(trial_dir, os.getcwd()), fn)
     fn = osp.normpath(fn)
-    return fn
+    return fn if os.path.exists(fn) else None
     
 # Load a video's frame timestamps.
-def load_timestamps(ts_file):
-    df = pd.read_csv(ts_file, index_col=0)
-    df.columns = ['Time']
-    I = np.nonzero((df.diff()<0).values)[0]
-    for i in I:
-        df.iloc[i:] += 128
-    df -= df.iloc[0]
-    return df
+# Returns a numpy array where row index represents frame index starting at 0.
+# Beware, frame indices in tracker.frame_list start from 1 (openCV convention).
+def load_timestamps_(ts_file):
+    try:
+        df   = pd.read_csv(ts_file, index_col=0)
+        time = np.empty(df.index[-1]+1)
+        time.fill(np.nan)
+        time[df.index] = df.iloc[:,0]
+        I = np.nonzero(np.isfinite(time))[0]
+        J = np.nonzero(time[I][1:]-time[I][:-1]<0)[0]
+        for j in J:
+            time[I[j]+1:] += 128
+        time[I] -= time[I[0]]
+        return time
+    except:
+        return None
 
 # Load a trial file created by trilab-tracker.
-def load_trial(trial_file, load_fixes=True):
+def load_trial(trial_file, load_fixes=True, load_timestamps=True):
     trial_dir  = osp.dirname(trial_file)
     trial      = { 'trial_dir':trial_dir }
     with open(trial_file,'rb') as f:
@@ -210,6 +224,17 @@ def load_trial(trial_file, load_fixes=True):
         for fix in fixes:
             fixer.fix(trial['data'], *fix)
     trial['data'] = trial['data'][:,:trial['n_ind'],:]
+    try:
+        assert(load_timestamps)
+        ts_file = locate_timestamps(trial_file)
+        time = load_timestamps_(ts_file)
+        time = time[trial['frame_list']-1] # -1 because frame_list indices start at 1
+        trial['timestamps_file'] = ts_file
+        trial['time'] = time
+    except:
+        logging.info(f'No timestamps found. Using fps instead.')
+        trial['timestamps_file'] = None
+        trial['time'] = (trial['frame_list']-1)/trial['fps']
     return trial
 
 # Load a trial file created by ethovision.
