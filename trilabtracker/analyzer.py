@@ -1,6 +1,30 @@
 import numpy as np
 from . import utils
 
+# # Distance between a point and an ellipse (origin=ellipse center).
+# def dist2ellipse(semi_major, semi_minor, xy):
+#     px,py = np.absolute(xy)
+#     tx,ty = 0.707,0.707
+#     a = semi_major
+#     b = semi_minor
+#     for x in range(0, 3):
+#         x   = a * tx
+#         y   = b * ty
+#         ex  = (a*a - b*b) * tx**3 / a
+#         ey  = (b*b - a*a) * ty**3 / b
+#         rx  = x - ex
+#         ry  = y - ey
+#         qx  = px - ex
+#         qy  = py - ey
+#         r   = np.hypot(ry, rx)
+#         q   = np.hypot(qy, qx)
+#         tx  = min(1, max(0, (qx * r / q + ex) / a))
+#         ty  = min(1, max(0, (qy * r / q + ey) / b))
+#         t   = np.hypot(ty, tx)
+#         tx /= t 
+#         ty /= t 
+#     return (np.copysign(a * tx, xy[0]), np.copysign(b * ty, xy[1]))    
+
 def compute_kinematics(trial, wall_distance=False):
     center      = np.array([trial['tank']['xc'],trial['tank']['yc']])
     px2cm       = trial['R_cm']/trial['tank']['R']
