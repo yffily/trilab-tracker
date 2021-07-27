@@ -139,7 +139,7 @@ def load_pik(filename):
 # Load a settings file into a dictionary.
 # Can be a txt file (e.g. output from tracker) or an excel file.
 def load_settings(settings_file):
-    ext = os.path.splitext(settings_file)[1]
+    ext = osp.splitext(settings_file)[1]
     if ext=='.txt':
         settings = load_txt(settings_file)
         for k,v in settings.items():
@@ -171,6 +171,27 @@ def apply_filtered_settings(filtered_settings, trial_name):
             settings.update(settings_)
     return settings
 
+# Locate a video's frame timestamps.
+def locate_timestamps(path):
+    # Assume the path is either the trial's directory, or a file in it.
+    trial_dir = path if osp.isdir(path) else osp.dirname(path)
+    fn = open(osp.join(trial_dir, 'raw.txt')).read() # Raw video file.
+    fn = osp.splitext(fn)[0]+'.txt' # Timestamp file.
+    # Make fn relative to current dir rather than trial_dir.
+    fn = osp.join(osp.relpath(trial_dir, os.getcwd()), fn)
+    fn = osp.normpath(fn)
+    return fn
+    
+# Load a video's frame timestamps.
+def load_timestamps(ts_file):
+    df = pd.read_csv(ts_file, index_col=0)
+    df.columns = ['Time']
+    I = np.nonzero((df.diff()<0).values)[0]
+    for i in I:
+        df.iloc[i:] += 128
+    df -= df.iloc[0]
+    return df
+
 # Load a trial file created by trilab-tracker.
 def load_trial(trial_file, load_fixes=True):
     trial_dir  = osp.dirname(trial_file)
@@ -190,8 +211,6 @@ def load_trial(trial_file, load_fixes=True):
             fixer.fix(trial['data'], *fix)
     trial['data'] = trial['data'][:,:trial['n_ind'],:]
     return trial
-
-bla = 5
 
 # Load a trial file created by ethovision.
 def load_trial_ethovision(trial_file):
@@ -224,13 +243,13 @@ def load_trial_ethovision(trial_file):
 
 # Analyze tracking output to determine tracking status (including % complete).
 def tracking_status(trial_dir):
-    name  = os.path.basename(trial_dir)
-    if not os.path.isdir(trial_dir):
+    name  = osp.basename(trial_dir)
+    if not osp.isdir(trial_dir):
         return dict(name=name, status='not found')
-    in_trial_dir   = lambda x: os.path.join(trial_dir,x)
-    has_tank       = os.path.exists(in_trial_dir('tank.pik'))
-    has_background = os.path.exists(in_trial_dir('background.npz'))
-    has_trial      = os.path.exists(in_trial_dir('trial.pik'))
+    in_trial_dir   = lambda x: osp.join(trial_dir,x)
+    has_tank       = osp.exists(in_trial_dir('tank.pik'))
+    has_background = osp.exists(in_trial_dir('background.npz'))
+    has_trial      = osp.exists(in_trial_dir('trial.pik'))
     try:
         with open(in_trial_dir('settings.txt')) as f:
             settings = [ [x.strip() for x in line.split('=')] for line in f.readlines() ]
