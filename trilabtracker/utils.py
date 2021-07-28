@@ -262,7 +262,7 @@ def load_trial_ethovision(trial_file):
     info  = '- n_ind is the number of individuals.\n- time contains the timestamp of each frame.\n- data is an array of size (n_frames,n_ind,4). The 4 quantities saved for each fish in each frame are: x coordinate, y coordinate, angle with x axis (from velocity), area.'
     
     trial = { k:v for k,v in locals().items() if k in 
-              ['n_ind', 'time', 'data', 'fps', 'info'] }
+              ['trial_file', 'n_ind', 'time', 'data', 'fps', 'info'] }
     
     return trial
 

@@ -1,4 +1,6 @@
 import numpy as np
+#import warnings
+from copy import deepcopy
 from . import utils
 
 # # Distance between a point and an ellipse (origin=ellipse center).
@@ -66,22 +68,26 @@ def compute_cuts(trial,ranges):
                        'v'       : n_valid[3]/n_valid[1], 
                        'v_ang'   : n_valid[4]/n_valid[1], 
                        'final'   : n_valid[5]/n_total     }
-    trial.update({'valid':valid, 'valid_fraction':valid_fraction})
+    trial.update(valid=valid, valid_fraction=valid_fraction)
     return trial
 
 def apply_cuts(trial):
     for k in 'data','vel','acc','v':
-        trial[k][~valid[:,:,6]] = np.nan
+        trial[k][~trial['valid'][:,:,5]] = np.nan
     return trial
 
 default_cut_ranges = dict( v=[0,np.inf], v_ang=[-np.inf,np.inf] )
 
-def preprocess_trial(trial, cut_ranges=None, load_timestamps=True):
+def preprocess_trial(trial, cut_ranges=None, load_timestamps=True, etho=False):
+    if etho:
+        raise Exception('Not implemented yet: preprocess_trial for ethovision files.')
     trial.update(utils.load_trial(trial['trial_file'], load_timestamps=load_timestamps))
     trial = compute_kinematics(trial)
     if not cut_ranges is None:
-        ranges = copy(default_cut_ranges)
+        ranges = deepcopy(default_cut_ranges)
         ranges.update(cut_ranges)
+        for k in {'v'} & ranges.keys():
+            ranges[k] = [x*trial['R_cm'] for x in ranges[k]]
         trial = compute_cuts(trial, ranges)
         trial = apply_cuts(trial)
     return trial
