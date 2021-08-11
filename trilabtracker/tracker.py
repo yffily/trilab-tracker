@@ -359,8 +359,10 @@ class Tracker:
         except:
             self.release()
             logging.info('Failed')
+            logging.info(f'frame {self.frame_num}')
             for info in sys.exc_info():
                 logging.warning(info)
+                logging.warning(traceback.print_tb())
             return 1
     
 
@@ -426,33 +428,6 @@ class Tracker:
             # Use previous frame(s) to predict current coordinates.
             predicted        = self.predict_next()
             
-#            print(self.frame_num)
-#            print(self.new[:self.n_ind,0])
-#            # Look for overlaps.
-#            for i1 in range(self.n_ind):
-#                # Only look into fish that just disappeared.
-#                if np.all(np.isfinite(self.new[i1,:2])) or np.any(np.isnan(predicted[i1,:2])):
-#                    continue
-#                # Find the fish closest to the predicted position of the lost fish.
-#                d  = np.hypot(*(self.new[:self.n_ind,:2]-predicted[i1,:2]).T)
-#                i2 = np.nanargmin(d)
-#                # If d[i2] is NaN, then no fish were found at all. Stop there.
-#                if np.isnan(d[i2]):
-#                    continue
-#                print(self.new[:self.n_ind,0])
-#                print(i2)
-#                # If i1 and i2 overlapped in the last frame, keep them merged.
-#                d_ = np.hypot(*(self.data[-1,i1,:2]-self.data[-1,i2,:2]).T)
-#                if d_<1e-6:
-#                    self.new[i1] = self.new[i2]
-#                    continue
-#                # If not, look for recent proximity and an area increase.
-#                if d[i2]<2*self.body_size_estimate and \
-#                  self.new[i2,3]>predicted[i2,3]+0.5*predicted[i1,3]:
-#                    self.new[i1] = self.new[i2]
-#                    continue
-#            print()
-            
             # Compute the generalized distance between every object in the 
             # frame and every object in the previous frame, then solve
             # the assignment problem with scipy.
@@ -498,10 +473,9 @@ class Tracker:
                         continue
                     # Find the fish closest to the predicted position of the lost fish.
                     d  = np.hypot(*(self.new[:,:2]-predicted[i1,:2]).T)
-                    i2 = np.nanargmin(d)
-                    # If d[i2] is NaN, then no fish were found at all. Stop there.
-                    if np.isnan(d[i2]):
+                    if np.all(np.isnan(d)):
                         continue
+                    i2 = np.nanargmin(d)
                     # If i1 and i2 overlapped in the last frame, keep them merged.
                     d_ = np.hypot(*(self.data[-1,i1,:2]-self.data[-1,i2,:2]).T)
                     if d_<1e-6:
@@ -511,10 +485,6 @@ class Tracker:
                     if d[i2]<2*self.body_size_estimate and self.new[i2,3]>predicted[i2,3]+0.5*predicted[i1,3]:
                         self.new[i1] = self.new[i2]
                         continue
-            
-#            if self.frame_num>10:
-#                self.save_trial()
-#                sys.exit()
             
             # Fix orientations.
             past    = self.data[-5:]
