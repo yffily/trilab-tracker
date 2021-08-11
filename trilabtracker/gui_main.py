@@ -235,6 +235,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def reload(self):
         self.track = Track(self.input_dir)
+        self.track.bad_displacement = self.tunables['Suspicious Displacement (px)'].value()
+        self.track.locate_bad_frames()
         self.redraw()
         self.window().setWindowTitle(self.input_dir)
 
