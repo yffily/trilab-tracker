@@ -274,6 +274,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.apply_fixes()
             return True
         except:
+            print(sys.exc_info())
             return False
     
     def timeout(self):
