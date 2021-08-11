@@ -77,11 +77,11 @@ class Tracker:
             self.ideal_area   = (self.min_area+self.max_area)/2
         if self.ideal_aspect is None:
             self.ideal_aspect = self.max_aspect/2 
-        body_size_estimate = np.sqrt(self.max_area)
+        self.body_size_estimate = np.sqrt(self.max_area)
         if self.reversal_threshold is None:
-            self.reversal_threshold = body_size_estimate*0.05
+            self.reversal_threshold = self.body_size_estimate*0.05
 #        if significant_displacement is None:
-#            self.significant_displacement = body_size_estimate*0.2
+#            self.significant_displacement = self.body_size_estimate*0.2
         
         # Parameters for morphological operations on contour candidates.
         # The input parameter should be list of (cv2.MorphType,pixel_radius) pairs.
@@ -420,10 +420,42 @@ class Tracker:
         if len(self.data) == 0:
             self.new = self.new[:self.n_track]
         else:
-            # If there is a valid previous frame, compute the generalized distance between
-            # every object in the frame and every object in the previous frame, then solve
-            # the assignment problem with scipy.
+            # If there is a valid previous frame, match objects in the current frame
+            # to objects in the previous frame.
+            
+            # Use previous frame(s) to predict current coordinates.
             predicted        = self.predict_next()
+            
+#            print(self.frame_num)
+#            print(self.new[:self.n_ind,0])
+#            # Look for overlaps.
+#            for i1 in range(self.n_ind):
+#                # Only look into fish that just disappeared.
+#                if np.all(np.isfinite(self.new[i1,:2])) or np.any(np.isnan(predicted[i1,:2])):
+#                    continue
+#                # Find the fish closest to the predicted position of the lost fish.
+#                d  = np.hypot(*(self.new[:self.n_ind,:2]-predicted[i1,:2]).T)
+#                i2 = np.nanargmin(d)
+#                # If d[i2] is NaN, then no fish were found at all. Stop there.
+#                if np.isnan(d[i2]):
+#                    continue
+#                print(self.new[:self.n_ind,0])
+#                print(i2)
+#                # If i1 and i2 overlapped in the last frame, keep them merged.
+#                d_ = np.hypot(*(self.data[-1,i1,:2]-self.data[-1,i2,:2]).T)
+#                if d_<1e-6:
+#                    self.new[i1] = self.new[i2]
+#                    continue
+#                # If not, look for recent proximity and an area increase.
+#                if d[i2]<2*self.body_size_estimate and \
+#                  self.new[i2,3]>predicted[i2,3]+0.5*predicted[i1,3]:
+#                    self.new[i1] = self.new[i2]
+#                    continue
+#            print()
+            
+            # Compute the generalized distance between every object in the 
+            # frame and every object in the previous frame, then solve
+            # the assignment problem with scipy.
             # Include contour areas in the generalized distance to penalize excessive 
             # changes of area between two frames.
             coord_pred       = predicted[:,[0,1,3]]
@@ -455,11 +487,35 @@ class Tracker:
             # based on it. Caveat: if the last known position is old, try to match recently
             # valid objects first.
             
-            # TODO: Identify cases in which a disappeared fish likely
-            # merged contours with another fish (e.g. detect likely occlusions).
-            # This will involve looking for area changes and making sure it doesn't
-            # involve an overly large frame-to-frame displacement.
-        
+            # Look for fish overlaps. If fish i1 just disappeared, was close to fish i2
+            # in the previous frame, and the area of fish i2 just went up, assume it's 
+            # an overlap and give fish i1 the same coordinates as fish i2.
+            # Loop over the fish twice to handle triple-contact events.
+            for k in range(2):
+                for i1 in range(self.n_ind):
+                    # Only look into fish that just disappeared.
+                    if np.all(np.isfinite(self.new[i1,:2])) or np.any(np.isnan(predicted[i1,:2])):
+                        continue
+                    # Find the fish closest to the predicted position of the lost fish.
+                    d  = np.hypot(*(self.new[:,:2]-predicted[i1,:2]).T)
+                    i2 = np.nanargmin(d)
+                    # If d[i2] is NaN, then no fish were found at all. Stop there.
+                    if np.isnan(d[i2]):
+                        continue
+                    # If i1 and i2 overlapped in the last frame, keep them merged.
+                    d_ = np.hypot(*(self.data[-1,i1,:2]-self.data[-1,i2,:2]).T)
+                    if d_<1e-6:
+                        self.new[i1] = self.new[i2]
+                        continue
+                    # If not, look for recent proximity and an area increase.
+                    if d[i2]<2*self.body_size_estimate and self.new[i2,3]>predicted[i2,3]+0.5*predicted[i1,3]:
+                        self.new[i1] = self.new[i2]
+                        continue
+            
+#            if self.frame_num>10:
+#                self.save_trial()
+#                sys.exit()
+            
             # Fix orientations.
             past    = self.data[-5:]
             # 1. Look for continuity with the predicted value. Use last known value rather than
