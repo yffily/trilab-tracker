@@ -123,7 +123,11 @@ def wait_on_named_window(name,delay=-1):
 
 # Save a dictionary as a text file.
 def save_txt(filename, data_dict):
-    txt = '\n'.join( f'{key} = {value}' for key,value in data_dict.items() )
+    txt = []
+    for k,v in data_dict.items():
+        q = '"' if type(v)==str else ''
+        txt.append(f'{k} = {q}{v}{q}')
+    txt = '\n'.join(txt)
     with open(filename,'w') as f:
         f.write(txt)
 
@@ -163,6 +167,8 @@ def load_settings(settings_file):
 # The keys of the outer dictionary are the glob patterns.
 def load_filtered_settings(settings_file):
     df = pd.read_excel(settings_file, dtype=str)
+    for c1,c2 in {'“':'"', '”':'"', '’':"'"}.items():
+        df['parameter value'] = df['parameter value'].str.replace(c1,c2)
     df['parameter value'] = df['parameter value'].apply(eval)
     fsettings = {}
     for pattern,df_ in df.groupby('trial filter'):
@@ -283,17 +289,16 @@ def tracking_status(trial_dir):
     try:
         with open(in_trial_dir('log.txt')) as f:
             log = [ line.strip() for line in f.readlines() ]
-        if 'Failed' in log:
-            status = 'failed'
-        elif log[-1] == 'Done':
+        if log[-1] == 'Done':
             status = 'complete'
         else:
+            status = 'failed' if 'Failed' in log else 'tracking'
             progress = [ line.strip() for line in log if 'Tracking' in line ]
             if len(progress)==0:
-                status = 'tracking (0%)'
+                status += '(0%)'
             else:
                 percent = re.findall('[\d.]*%',progress[-1])[0]
-                status  = f'tracking ({percent})'
+                status += f' ({percent})'
     except:
         status = 'no log'
     return { k:v for k,v in locals().items() if not k in ['f','in_trial_dir','progress'] }

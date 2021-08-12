@@ -40,6 +40,7 @@ bkg.n_training_frames: Number of frames to average to compute the video's backgr
 bkg.t_start: Timestamp at which to start computing the video's background.
 bkg.t_stop: Timestamp at which to stop computing the video's background.
 bkg.contrast_factor: Number by which to multiply the difference between a frame and the background.
+bkg.object_type: Specify "light" to look for objects lighter than the background, "dark" for objects darker than the background, or "both" for both.
 bkg.secondary_subtraction: Whether to perform secondary subtraction, i.e., de-emphasize pixels whose difference with the background is consistently large.
 bkg.secondary_factor: How much to de-emphasize pixels during secondary background subtraction. 
 '''
@@ -51,8 +52,8 @@ default_args = dict( t_start = 0, t_end = -1, n_extra = 1, n_report = 100,
                      morph_transform = [], reversal_threshold = None, 
                      # significant_displacement = None, 
                      bkg = dict( n_training_frames = 100, t_start = 0, t_end = -1,
-                                 contrast_factor = 5, secondary_subtraction = True,
-                                 secondary_factor = 1 )
+                                 contrast_factor = 5, object_type = 'both', 
+                                 secondary_subtraction = True, secondary_factor = 1 )
                     ) 
 
 
@@ -228,7 +229,7 @@ class Tracker:
     def get_next_frame(self):
         if self.cap.isOpened():
             ret,self.bgr = self.cap.read()
-            if ret == True:
+            if ret:
                 self.frame.from_bgr(self.bgr)
                 self.frame_num += 1
                 return True
@@ -297,7 +298,8 @@ class Tracker:
         for i in training_frames:
             self.set_frame(i)
             if self.get_next_frame():
-                self.frame.subtract_background(primary=True, secondary=False)
+                self.frame.subtract_background(object_type=self.bkg['object_type'],
+                                               primary=True, secondary=False)
                 self.frame.bkg2 += self.frame.f32
                 count           += 1
         self.frame.bkg2 /= count
@@ -318,8 +320,8 @@ class Tracker:
     def track_next_frame(self):
         if not self.get_next_frame():
             return False
-        self.frame.subtract_background(secondary=False)
-        self.frame.subtract_background(primary=False)
+        self.frame.subtract_background(object_type=self.bkg['object_type'], secondary=False)
+        self.frame.subtract_background(object_type=self.bkg['object_type'], primary=False)
         self.frame.apply_mask()
         self.frame.blur(self.n_blur)
         self.frame.threshold(self.block_size, self.threshold_offset)
@@ -348,6 +350,7 @@ class Tracker:
                     t = str(datetime.datetime.now()).split('.')
                     logging.info(parindent + f'Tracking: {self.get_current_timestamp()}, ' +
                                  f'{self.get_percent_complete():4.1f}% complete, {t[0]}.{t[1][:2]}' )
+#                self.track_next_frame()
                 if not self.track_next_frame():
                     raise Exception(f'Could not read frame {i_frame}.')
             self.release()
@@ -356,13 +359,12 @@ class Tracker:
             logging.info(parindent+'Done')
             reset_logging()
             return 0
-        except:
+        except Exception as e:
             self.release()
             logging.info('Failed')
-            logging.info(f'frame {self.frame_num}')
-            for info in sys.exc_info():
-                logging.warning(info)
-                logging.warning(traceback.print_tb())
+            logging.info(f'Stopped at frame {self.frame_num}')
+#            logging.warning(e, exc_info=True, stack_info=False)
+            logging.warning(traceback.print_exception(type(e), e, e.__traceback__))
             return 1
     
 

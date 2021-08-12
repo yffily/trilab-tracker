@@ -22,13 +22,18 @@ class Frame:
     def apply_mask(self):
         self.i8 = cv2.bitwise_and(self.i8, self.mask)
 
-    def subtract_background(self, primary=True, secondary=True):
+    def subtract_background(self, object_type='both', primary=True, secondary=True):
         b1 = primary and (not self.bkg is None)
         b2 = secondary and (not self.bkg2 is None)
         if b1:
             np.subtract(self.i8, self.bkg, out=self.f32)
             np.multiply(self.f32, self.contrast_factor, out=self.f32)
-            np.absolute(self.f32, out=self.f32)
+            if object_type=='light':
+                self.f32[self.f32<0] = 0
+            elif object_type=='dark':
+                self.f32[self.f32>0] = 0
+            if object_type in ['dark','both']:
+                np.absolute(self.f32, out=self.f32)
             np.minimum(self.f32, 255, out=self.f32)
         elif b2:
             self.f32[...] = self.i8

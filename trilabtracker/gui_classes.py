@@ -323,3 +323,35 @@ class SidePanel(QtWidgets.QTabWidget):
 
 #----------------------------------------------------------
 
+class Tunable():
+    
+    def __init__(self, WidgetClass, parent=None):
+        self.widget = WidgetClass()
+        if isinstance(self.widget, QtWidgets.QComboBox):
+            self.valueChanged = self.widget.currentTextChanged
+        else:
+            self.valueChanged = self.widget.valueChanged
+    
+    def setRange(self, *args, **kwargs):
+        if hasattr(self.widget, 'setRange'):
+            return self.widget.setRange(*args, **kwargs)
+
+    def setComboList(self, item_list):
+        for i in item_list:
+            self.widget.addItem(i)
+
+    def setValue(self, v):
+        if isinstance(self.widget, QtWidgets.QComboBox):
+            return self.widget.setCurrentText(v)
+        if isinstance(self.widget, QtWidgets.QSpinBox):
+            v = int(v)
+        elif isinstance(self.widget, QtWidgets.QDoubleSpinBox):
+            v = float(v)
+        return self.widget.setValue(v)
+    
+    def value(self):
+        if isinstance(self.widget, QtWidgets.QComboBox):
+            return self.widget.currentText()
+        else:
+            return self.widget.value()
+        

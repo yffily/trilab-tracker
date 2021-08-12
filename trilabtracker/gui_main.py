@@ -2,6 +2,7 @@ import sys
 import os
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt
+import traceback
 from .gui_classes import *
 
 
@@ -41,14 +42,19 @@ class MainWindow(QtWidgets.QMainWindow):
                    'ideal_area', 'Read one frame in' ]
         dspins = [ 'max_aspect', 'ideal_aspect', 'contrast_factor', 
                    'secondary_factor', 'Track length (s)', 'Suspicious Displacement (px)' ]
+        combos = [ 'object_type' ]
         # Map settings names to tunables names.
         self.setting2tunable = { 'bkg.secondary_factor':'secondary_factor', 
-                                 'bkg.contrast_factor':'contrast_factor' }
-        for k in spins+dspins:
-            self.tunables[k] = QtWidgets.QSpinBox() if k in spins \
-                                   else QtWidgets.QDoubleSpinBox()
-            self.tunables[k].setRange(0,1000)
+                                 'bkg.contrast_factor':'contrast_factor',
+                                 'bkg.object_type':'object_type' }
+        for K,wc in [(spins,QtWidgets.QSpinBox), 
+                     (dspins,QtWidgets.QDoubleSpinBox),
+                     (combos,QtWidgets.QComboBox)]:
+            for k in K:
+                self.tunables[k] = Tunable(wc)
+                self.tunables[k].setRange(0,1000)
         self.tunables['Read one frame in'].setRange(-100,100)
+        self.tunables['object_type'].setComboList(['light','dark','both'])
         def suspicious_displacement(value):
             self.track.bad_displacement = value
             self.track.locate_bad_frames()
@@ -113,7 +119,7 @@ class MainWindow(QtWidgets.QMainWindow):
         def create_spinbox_row(label):
             row = QtWidgets.QHBoxLayout()
             row.addWidget(QtWidgets.QLabel(label))
-            row.addWidget(self.tunables[label])
+            row.addWidget(self.tunables[label].widget)
             return row
         
         # Set up 'Tune' tab.
@@ -121,6 +127,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for k in [ 'Subtract Background', 'Subtract Secondary Background', 
                    'Apply Tank Mask', 'Threshold', 'Show Contours', 'Show Tank' ]:
             tab.addWidget(self.checkboxes[k])
+#        tab.addWidget(self.tunables['object_type'].widget)
+        tab.addLayout(create_spinbox_row('object_type'))
         for k in [ 'n_blur', 'block_size', 'threshold_offset', 'min_area', 'max_area', 
                    'ideal_area', 'max_aspect', 'ideal_aspect', 
                    'contrast_factor', 'secondary_factor' ]:
@@ -263,11 +271,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 k2 = self.setting2tunable.get(k,k)
                 t = self.tunables.get(k2)
                 if not t is None:
-                    if isinstance(t,QtWidgets.QSpinBox):
-                        v = int(v)
-                    elif isinstance(t,QtWidgets.QDoubleSpinBox):
-                        v = float(v)
-                    self.tunables[k2].setValue(v)
+                    t.setValue(eval(v))
             self.update_bkgSub()
             # Load fix history and fixed tracks.
             D = utils.load_pik(self.track.join('gui_fixes.pik'))
@@ -275,8 +279,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.history.sync()
             self.apply_fixes()
             return True
-        except:
-            print(sys.exc_info())
+        except Exception as e:
+#            print(traceback.print_exception(type(e), e, e.__traceback__))
             return False
     
     def timeout(self):
@@ -372,15 +376,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track.read_frame(value)
         if self.checkboxes['Show Contours'].isChecked() or \
                 self.tabs.currentIndex()==0:
-            self.track.frame.subtract_background(  
-                   self.checkboxes['Subtract Background'].isChecked(), 
-                   self.checkboxes['Subtract Secondary Background'].isChecked() )
-            if self.checkboxes['Apply Tank Mask'].isChecked():
-                self.track.frame.apply_mask()
             s = { k:v.value() for k,v in self.tunables.items() }
             if s['n_blur']>0:
                 n_blur = s['n_blur'] + s['n_blur']%2 - 1
                 self.track.frame.blur(n_blur)
+            self.track.frame.subtract_background( s['object_type'], 
+                   self.checkboxes['Subtract Background'].isChecked(), 
+                   self.checkboxes['Subtract Secondary Background'].isChecked() )
+            if self.checkboxes['Apply Tank Mask'].isChecked():
+                self.track.frame.apply_mask()
             if self.tabs.currentIndex()==0 and \
                     not self.checkboxes['Threshold'].isChecked():
                 # Stash the frame to allow viewing contours over non-thresholded frame.
@@ -416,7 +420,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                      alpha*self.track.overlay[mask] ).astype(np.uint8)
         
         self.video.setImage_(self.track.bgr) # ! Modifies track.bgr (converts to pyqtgraph image).
-    
+
     def reset_tunables(self):
         for k in self.track.settings.keys():
             k2 = self.setting2tunable.get(k,k)
