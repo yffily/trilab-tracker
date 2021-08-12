@@ -36,6 +36,7 @@ ideal_aspect: Approximate aspect ratio of an individual. Used to identify the n_
 area_penalty: Weight of area changed compared to distance traveled when connecting the candidate individuals found in a frame to the ones found in the previous frame.
 morph_transform: List of morphological transformation to apply after thresholding. Each transformation is given as a pair (cv2 transform, radius). The radius is used to generate a circular kernel.
 reversal_threshold: Minimal distance traveled by an individual against its own orientation over the last 5 frames to reverse said orientation.
+max_displacement: Largest displacement allowed between consecutive frames (in pixels). If a fish moves by more, its new position is set to NaN. Set to None to disable.
 bkg.n_training_frames: Number of frames to average to compute the video's background.
 bkg.t_start: Timestamp at which to start computing the video's background.
 bkg.t_stop: Timestamp at which to stop computing the video's background.
@@ -50,7 +51,7 @@ default_args = dict( t_start = 0, t_end = -1, n_extra = 1, n_report = 100,
                      min_area = 20, max_area = 800, ideal_area = None, 
                      max_aspect = 15, ideal_aspect = None, area_penalty = 1, 
                      morph_transform = [], reversal_threshold = None, 
-                     # significant_displacement = None, 
+                     max_displacement = None, 
                      bkg = dict( n_training_frames = 100, t_start = 0, t_end = -1,
                                  contrast_factor = 5, object_type = 'both', 
                                  secondary_subtraction = True, secondary_factor = 1 )
@@ -81,8 +82,8 @@ class Tracker:
         self.body_size_estimate = np.sqrt(self.max_area)
         if self.reversal_threshold is None:
             self.reversal_threshold = self.body_size_estimate*0.05
-#        if significant_displacement is None:
-#            self.significant_displacement = self.body_size_estimate*0.2
+#        if max_displacement is None: # Keep None to disable entirely.
+#            self.max_displacement = self.body_size_estimate
         
         # Parameters for morphological operations on contour candidates.
         # The input parameter should be list of (cv2.MorphType,pixel_radius) pairs.
@@ -464,6 +465,15 @@ class Tracker:
             # based on it. Caveat: if the last known position is old, try to match recently
             # valid objects first.
             
+            # Look for unrealistic displacement. Set new position to NaN.
+            # !! This can backfire. A fish needs a NaN frame before it can jump to a
+            # far-away position, but if it does, it also needs a NaN frame before it 
+            # can jump back to its true position.
+            if not self.max_displacement is None and self.max_displacement>0:
+                d = np.hypot( *(self.new[:self.n_ind,:2] - self.data[-1,:self.n_ind,:2]).T )
+                for i in np.nonzero(d>self.max_displacement)[0]:
+                    self.new[i,:] = np.nan
+            
             # Look for fish overlaps. If fish i1 just disappeared, was close to fish i2
             # in the previous frame, and the area of fish i2 just went up, assume it's 
             # an overlap and give fish i1 the same coordinates as fish i2.
@@ -530,7 +540,7 @@ class Tracker:
                  'n_blur', 'block_size', 'threshold_offset', 
                  'min_area', 'max_area', 'ideal_area', 
                  'max_aspect', 'ideal_aspect', 'area_penalty', 
-                 'reversal_threshold', #'significant_displacement', 
+                 'reversal_threshold', 'max_displacement', 
                  'bkg' ]
         if fname == None:
             fname = self.settings_file
