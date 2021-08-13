@@ -14,6 +14,7 @@ class Frame:
         self.bkg  = None
         self.bkg2 = None
         self.mask = None
+        self.spot_mask = None
         self.contrast_factor = 1
     
     def from_bgr(self,bgr):
@@ -46,18 +47,33 @@ class Frame:
         else:
             return False
 
+    def get_spot_mask(self, block_size, offset, dilate_size=0):
+        if self.spot_mask is None:
+            self.spot_mask = np.empty_like(self.i8)
+        cv2.adaptiveThreshold( self.i8, maxValue=255, 
+                               adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                               thresholdType=cv2.THRESH_BINARY_INV,
+                               blockSize=block_size, C=-offset, dst=self.spot_mask )
+        if dilate_size>0:
+            kernel = np.ones((dilate_size,dilate_size))
+            cv2.dilate(self.spot_mask, kernel, dst=self.spot_mask)
+
+    def remove_spots(self):
+        if not self.spot_mask is None:
+            np.minimum(self.i8, self.spot_mask, out=self.i8)
+
     def blur(self, n_blur):
         cv2.GaussianBlur(self.i8, (n_blur,n_blur), 0, dst=self.i8)
         
     # We assume the objects to detect are darker than the background.
     # If not invert the image right after reading it and converting to grayscale.
-    def threshold(self, block_size, offset):
+    def threshold(self, block_size, offset, ):
 #        cv2.threshold( self.i8, 2*offset, 255, cv2.THRESH_BINARY, dst=self.i8 )
         cv2.adaptiveThreshold( self.i8, maxValue=255, 
                                adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                thresholdType=cv2.THRESH_BINARY,
                                blockSize=block_size, C=-offset, dst=self.i8 )
-        
+
     def apply_morphological_transform(self, mtype, mval):
             cv2.morphologyEx(self.i8, mtype, mval, dst=self.i8)
         
@@ -102,4 +118,5 @@ class Frame:
             self.coord.append([np.nan]*5)
         self.coord = np.array(self.coord,dtype=np.float)
         self.contours = [ c for c in self.contours if not (c is None) ]
+
 

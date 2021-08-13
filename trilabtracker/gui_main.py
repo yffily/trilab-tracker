@@ -38,10 +38,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Create spinboxes (editable values).
         self.tunables = {}
-        spins  = [ 'n_blur', 'block_size', 'threshold_offset', 'min_area', 'max_area', 
-                   'ideal_area', 'Read one frame in' ]
-        dspins = [ 'max_aspect', 'ideal_aspect', 'contrast_factor', 
-                   'secondary_factor', 'Track length (s)', 'Suspicious Displacement (px)' ]
+        spins  = [ 'spot_threshold', 'spot_dilate', 'n_blur', 'block_size', 
+                   'threshold_offset', 'min_area', 'max_area', 'ideal_area', 
+                   'Read one frame in' ]
+        dspins = [ 'max_aspect', 'ideal_aspect', 'contrast_factor', 'secondary_factor', 
+                   'Track length (s)', 'Suspicious Displacement (px)' ]
         combos = [ 'object_type' ]
         # Map settings names to tunables names.
         self.setting2tunable = { 'bkg.secondary_factor':'secondary_factor', 
@@ -129,9 +130,9 @@ class MainWindow(QtWidgets.QMainWindow):
             tab.addWidget(self.checkboxes[k])
 #        tab.addWidget(self.tunables['object_type'].widget)
         tab.addLayout(create_spinbox_row('object_type'))
-        for k in [ 'n_blur', 'block_size', 'threshold_offset', 'min_area', 'max_area', 
-                   'ideal_area', 'max_aspect', 'ideal_aspect', 
-                   'contrast_factor', 'secondary_factor' ]:
+        for k in [ 'spot_threshold', 'spot_dilate', 'n_blur', 'block_size', 
+                   'threshold_offset', 'min_area', 'max_area', 'ideal_area', 
+                   'max_aspect', 'ideal_aspect', 'contrast_factor', 'secondary_factor' ]:
             tab.addLayout(create_spinbox_row(k))
         tab.addWidget(self.buttons['reset settings'])
         tab.addStretch(1)
@@ -374,15 +375,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track.read_frame()
         else:
             self.track.read_frame(value)
+        s = { k:v.value() for k,v in self.tunables.items() }
         if self.checkboxes['Show Contours'].isChecked() or \
                 self.tabs.currentIndex()==0:
-            s = { k:v.value() for k,v in self.tunables.items() }
+            if s['spot_threshold']>0:
+                self.track.frame.get_spot_mask( s['block_size'], 
+                        s['spot_threshold'], s['spot_dilate'] )
             if s['n_blur']>0:
                 n_blur = s['n_blur'] + s['n_blur']%2 - 1
                 self.track.frame.blur(n_blur)
-            self.track.frame.subtract_background( s['object_type'], 
-                   self.checkboxes['Subtract Background'].isChecked(), 
-                   self.checkboxes['Subtract Secondary Background'].isChecked() )
+            self.track.frame.subtract_background( 
+                    s['object_type'], 
+                    self.checkboxes['Subtract Background'].isChecked(), 
+                    self.checkboxes['Subtract Secondary Background'].isChecked() )
+            if s['spot_threshold']>0:
+                self.track.frame.remove_spots()
             if self.checkboxes['Apply Tank Mask'].isChecked():
                 self.track.frame.apply_mask()
             if self.tabs.currentIndex()==0 and \
@@ -402,7 +409,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.checkboxes['Subtract Background'].isChecked():
                 np.subtract(255, self.track.bgr, out=self.track.bgr)
         
-        track_length = int(self.track.fps*self.tunables['Track length (s)'].value()) if \
+        track_length = int(self.track.fps*s['Track length (s)']) if \
                          self.checkboxes['Show Track'].isChecked() else 0
         b = self.track.draw( value, track_length, 
                     show_fish=self.checkboxes['Show Fish'].isChecked(), 
@@ -410,7 +417,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     show_contours=self.checkboxes['Show Contours'].isChecked(), 
                     show_tank=self.checkboxes['Show Tank'].isChecked() )
         if self.checkboxes['Show Suspicious Displacement'].isChecked():
-            self.track.draw_scale_bar(int(self.tunables['Suspicious Displacement (px)'].value()))
+            self.track.draw_scale_bar(int(s['Suspicious Displacement (px)']))
             b = True
         
         if b and self.sliders['alpha'].value()>0:
@@ -430,9 +437,10 @@ class MainWindow(QtWidgets.QMainWindow):
         
     def update_bkgSub(self):
         self.track.frame.contrast_factor = self.tunables['contrast_factor'].value()
-        self.track.frame.bkg2 = self.track.frame.bkg2_ * \
-                                    self.tunables['secondary_factor'].value() * \
-                                    self.tunables['contrast_factor'].value()
+        if hasattr(self.track.frame, 'bkg2_'):
+            self.track.frame.bkg2 = self.track.frame.bkg2_ * \
+                                        self.tunables['secondary_factor'].value() * \
+                                        self.tunables['contrast_factor'].value()
 
     def update_fish_selection(self):
         for legend in self.legends:

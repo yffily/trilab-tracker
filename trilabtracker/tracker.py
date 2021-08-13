@@ -35,8 +35,11 @@ max_aspect: Maximal aspect ratio for a contour to qualify as an individual.
 ideal_aspect: Approximate aspect ratio of an individual. Used to identify the n_ind best candidate individuals in the first frame.
 area_penalty: Weight of area changed compared to distance traveled when connecting the candidate individuals found in a frame to the ones found in the previous frame.
 morph_transform: List of morphological transformation to apply after thresholding. Each transformation is given as a pair (cv2 transform, radius). The radius is used to generate a circular kernel.
+spot_threshold: Relative brightness above the surroundings above which a bright spot will be removed. Set to a negative value to disable.
+spot_dilate: Kernel size when dilating the spots found by adaptive thresholding using spot_threshold.
 reversal_threshold: Minimal distance traveled by an individual against its own orientation over the last 5 frames to reverse said orientation.
-max_displacement: Largest displacement allowed between consecutive frames (in pixels). If a fish moves by more, its new position is set to NaN. Set to None to disable.
+max_displacement: Largest displacement allowed between consecutive frames (in pixels). If a fish moves by more, its new position is set to NaN. Set to a negative value to disable.
+max_merging_distance: Fish can only be merged if they were closer than this distance in the previous frame (in pixels).
 bkg.n_training_frames: Number of frames to average to compute the video's background.
 bkg.t_start: Timestamp at which to start computing the video's background.
 bkg.t_stop: Timestamp at which to stop computing the video's background.
@@ -51,7 +54,9 @@ default_args = dict( t_start = 0, t_end = -1, n_extra = 1, n_report = 100,
                      min_area = 20, max_area = 800, ideal_area = None, 
                      max_aspect = 15, ideal_aspect = None, area_penalty = 1, 
                      morph_transform = [], reversal_threshold = None, 
-                     max_displacement = None, 
+                     max_displacement = -1, max_merging_distance = -1, 
+                     spot_threshold = -1, spot_dilate=5,
+#                     remove_spots_from_background, remove_spots_from_frames, 
                      bkg = dict( n_training_frames = 100, t_start = 0, t_end = -1,
                                  contrast_factor = 5, object_type = 'both', 
                                  secondary_subtraction = True, secondary_factor = 1 )
@@ -82,8 +87,10 @@ class Tracker:
         self.body_size_estimate = np.sqrt(self.max_area)
         if self.reversal_threshold is None:
             self.reversal_threshold = self.body_size_estimate*0.05
-#        if max_displacement is None: # Keep None to disable entirely.
+#        if self.max_displacement is None: # Keep None to disable entirely.
 #            self.max_displacement = self.body_size_estimate
+        if self.max_merging_distance is None:
+            self.max_merging_distance = self.body_size_estimate
         
         # Parameters for morphological operations on contour candidates.
         # The input parameter should be list of (cv2.MorphType,pixel_radius) pairs.
@@ -278,6 +285,11 @@ class Tracker:
         for i in training_frames:
             self.set_frame(i)
             if self.get_next_frame():
+                if self.spot_threshold>0:
+                    self.frame.get_spot_mask(self.block_size, self.spot_threshold)
+                    self.frame.remove_spots()
+                if self.spot_threshold>0:
+                    self.frame.get_spot_mask
                 np.add(self.frame.bkg, self.frame.i8, out=self.frame.bkg)
                 count += 1
         self.frame.bkg /= count
@@ -321,8 +333,12 @@ class Tracker:
     def track_next_frame(self):
         if not self.get_next_frame():
             return False
+        if self.spot_threshold>0:
+            self.frame.get_spot_mask(self.block_size, self.spot_threshold)
         self.frame.subtract_background(object_type=self.bkg['object_type'], secondary=False)
         self.frame.subtract_background(object_type=self.bkg['object_type'], primary=False)
+        if self.spot_threshold>0:
+            self.frame.remove_spots()
         self.frame.apply_mask()
         self.frame.blur(self.n_blur)
         self.frame.threshold(self.block_size, self.threshold_offset)
@@ -469,7 +485,7 @@ class Tracker:
             # !! This can backfire. A fish needs a NaN frame before it can jump to a
             # far-away position, but if it does, it also needs a NaN frame before it 
             # can jump back to its true position.
-            if not self.max_displacement is None and self.max_displacement>0:
+            if self.max_displacement>0:
                 d = np.hypot( *(self.new[:self.n_ind,:2] - self.data[-1,:self.n_ind,:2]).T )
                 for i in np.nonzero(d>self.max_displacement)[0]:
                     self.new[i,:] = np.nan
@@ -478,25 +494,84 @@ class Tracker:
             # in the previous frame, and the area of fish i2 just went up, assume it's 
             # an overlap and give fish i1 the same coordinates as fish i2.
             # Loop over the fish twice to handle triple-contact events.
-            for k in range(2):
-                for i1 in range(self.n_ind):
-                    # Only look into fish that just disappeared.
-                    if np.all(np.isfinite(self.new[i1,:2])) or np.any(np.isnan(predicted[i1,:2])):
-                        continue
-                    # Find the fish closest to the predicted position of the lost fish.
-                    d  = np.hypot(*(self.new[:,:2]-predicted[i1,:2]).T)
-                    if np.all(np.isnan(d)):
-                        continue
-                    i2 = np.nanargmin(d)
-                    # If i1 and i2 overlapped in the last frame, keep them merged.
-                    d_ = np.hypot(*(self.data[-1,i1,:2]-self.data[-1,i2,:2]).T)
-                    if d_<1e-6:
-                        self.new[i1] = self.new[i2]
-                        continue
-                    # If not, look for recent proximity and an area increase.
-                    if d[i2]<2*self.body_size_estimate and self.new[i2,3]>predicted[i2,3]+0.5*predicted[i1,3]:
-                        self.new[i1] = self.new[i2]
-                        continue
+#            for k in range(2):
+#                for i1 in range(self.n_ind):
+#                    # Only look into fish that just disappeared.
+#                    if np.all(np.isfinite(self.new[i1,:2])) or np.any(np.isnan(predicted[i1,:2])):
+#                        continue
+#                    # Find the fish closest to the predicted position of the lost fish.
+#                    d  = np.hypot(*(self.new[:,:2]-predicted[i1,:2]).T)
+#                    if np.all(np.isnan(d)):
+#                        continue
+#                    print(self.frame_num, i1)
+#                    
+#                    i2 = np.nanargmin(d)
+#                    # If i1 and i2 overlapped in the last frame, keep them merged.
+#                    d_ = np.hypot(*(self.data[-1,i1,:2]-self.data[-1,i2,:2]).T)
+#                    
+#                    if self.frame_num==413 and i1 in [1,2]:
+#                        print(self.frame_num, i1, i2)
+#                        print('  ', i2, d_, d[i2], self.max_merging_distance)
+#                        print('  ', self.new[i2,3], predicted[i2,3]+0.5*predicted[i1,3])
+#                    
+#                    if d_<1e-6:
+#                        self.new[i1] = self.new[i2]
+#                        continue
+#                    # If not, look for recent proximity and an area increase.
+#                    # TODO: Use distance between the contours rather than between their 
+#                    # centers. That means identify contours within merging distance and
+#                    # save them until the next frame in case they merge.
+#                    if d[i2]<self.max_merging_distance and self.new[i2,3]>predicted[i2,3]+0.5*predicted[i1,3]:
+#                        self.new[i1] = self.new[i2]
+#                        continue
+            
+            # TODO: Fancier multi-way match between just-disappeared fish and
+            # just-got-larger fish. Maybe using linear sum assignment again.
+#            if self.frame_num>22:
+#                print(self.frame_num)
+##                print('  ', self.data[-1,:self.n_ind,0])
+#                print('  ', self.new[:self.n_ind,0])
+            # If a previously merged fish is still missing, keep it merged with the same fish.
+            na = np.any(np.isnan(self.new[:self.n_ind,:2]), axis=1)
+            for i1 in np.nonzero(na)[0]:
+                d = np.hypot( *(self.data[-1,i1,:2] - self.data[-1,:self.n_ind,:2]).T )
+                I2 = np.nonzero( (d<1e-6) & \
+                        np.all(np.isfinite(self.new[:self.n_ind,:]),axis=1) )[0]
+                if len(I2)>0:
+                    i2 = I2[np.nanargmax(self.new[I2,3])]
+                    self.new[i1] = self.new[i2]
+            # List of fish that just disappeared.
+            B  = np.any(np.isnan(self.new[:self.n_ind,:2]), axis=1) \
+                    & np.any(np.isfinite(predicted[:self.n_ind,:2]), axis=1)
+            I1 = np.nonzero(B)[0]
+            # List of fish with valid coordinates
+            B  = np.all(np.isfinite(self.new[:self.n_ind,:]), axis=1)
+            I2 = np.nonzero(B)[0] 
+            # Distance matrix.
+            coord1 = predicted[I1,:2]
+            coord2 = self.new[I2,:2]
+            d  = cdist(coord1,coord2)/self.max_merging_distance
+            # Area change matrix.
+            a  = np.abs(1-self.new[None,I2,3]/(predicted[I1,None,3]+predicted[None,I2,3]))
+            # Compute generalized distance and find most likely mergers.
+            d_ = d+a
+            d_[np.isnan(d_)] = 1e8
+            J1,J2 = linear_sum_assignment(d_)
+            for j1,j2 in zip(J1,J2):
+#                if self.frame_num==25:
+#                    print('  ', I1[j1], I2[j2], d[j1,j2], a[j1,j2])
+#                    print('  ', predicted[I1[j1],:2], self.new[I2[j2],:2])
+                if d[j1,j2]<1 and a[j1,j2]<0.5:
+                    self.new[I1[j1]] = self.new[I2[j2]]
+            
+#            if self.frame_num>22:
+##                print('frame', self.frame_num)
+#                print(self.new[:self.n_ind,0])
+##                print('missing:', I1)
+##                print('merging distance matrix:', d)
+#                print('\n')
+            
+             
             
             # Fix orientations.
             past    = self.data[-5:]
@@ -520,6 +595,10 @@ class Tracker:
         self.frame_list = np.append(self.frame_list,self.frame_num)
         I = ~np.any(np.isnan(self.new),axis=1)
         self.last_known[I] = len(self.data)-1
+        
+#        if self.frame_num==60:
+#            self.save_trial()
+#            sys.exit()
 
 
     ############################
@@ -535,13 +614,12 @@ class Tracker:
 
     def save_settings(self, fname = None):
         keys = [ # 'input_video', 'output_dir', 
-                 'n_ind', 'n_extra', 't_start', 't_end', 
-                 'n_frames', 'frame_start', 'frame_end', 'frame_num', 
-                 'n_blur', 'block_size', 'threshold_offset', 
-                 'min_area', 'max_area', 'ideal_area', 
-                 'max_aspect', 'ideal_aspect', 'area_penalty', 
-                 'reversal_threshold', 'max_displacement', 
-                 'bkg' ]
+                 'n_ind', 'n_extra', 't_start', 't_end', 'n_frames', 'frame_start', 
+                 'frame_end', 'frame_num', 'n_blur', 'block_size', 'threshold_offset', 
+                 'min_area', 'max_area', 'ideal_area', 'max_aspect', 'ideal_aspect', 
+                 'area_penalty', 'spot_threshold', 'spot_dilate', 
+#                 'remove_spots_from_background', 'remove_spots_from_frames', 
+                 'reversal_threshold', 'max_displacement', 'max_merging_distance', 'bkg' ]
         if fname == None:
             fname = self.settings_file
         D = { k:v for k,v in self.__dict__.items() if k in keys }
@@ -549,7 +627,8 @@ class Tracker:
     
 
     def save_trial(self, fname = None):
-        D = { k:self.__dict__[k] for k in [ 'input_video', 'output_dir', 'n_ind', 'n_extra', 'fps', 'data', 'frame_list' ] }
+        D = { k:self.__dict__[k] for k in [ 'input_video', 'output_dir', 'n_ind', 
+                                            'n_extra', 'fps', 'data', 'frame_list' ] }
         D['tank'] = self.tank.to_dict()
         D['info'] = info
         if fname == None:
