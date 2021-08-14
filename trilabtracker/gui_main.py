@@ -53,7 +53,7 @@ class MainWindow(QtWidgets.QMainWindow):
                      (combos,QtWidgets.QComboBox)]:
             for k in K:
                 self.tunables[k] = Tunable(wc)
-                self.tunables[k].setRange(0,1000)
+                self.tunables[k].setRange(0,9999)
         self.tunables['Read one frame in'].setRange(-100,100)
         self.tunables['object_type'].setComboList(['light','dark','both'])
         def suspicious_displacement(value):

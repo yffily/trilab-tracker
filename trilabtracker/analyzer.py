@@ -52,33 +52,39 @@ def compute_kinematics(trial, wall_distance=False):
 def compute_cuts(trial,ranges):
 #    globals().update(trial)
     # valid array: axis 0 = time, axis 1 = [nan_xy,nan_any,d_wall,v,v_ang,final]
-    pos,vel,acc,v = map(trial.get,['pos','vel','acc','v'])
-    valid  = np.full(pos.shape[:2]+(6,),np.True_,dtype=np.bool_)
+    time,pos,vel,acc,v = map(trial.get,['time','pos','vel','acc','v'])
+    valid_time   = np.logical_and(time>=ranges['t'][0],time<ranges['t'][1])
+    valid        = np.full(pos.shape[:2]+(6,),np.True_,dtype=np.bool_)
     valid[:,:,0] = np.logical_not(np.any(np.isnan(pos),axis=2))
     valid[:,:,1] = np.logical_not(np.any(np.isnan(vel),axis=2))
     valid[:,:,2] = np.logical_not(np.any(np.isnan(acc),axis=2))
     valid[:,:,3] = np.logical_and(v>=ranges['v'][0],v<=ranges['v'][1])
     valid[:,:,4] = np.logical_and(vel[:,:,2]>=ranges['v_ang'][0],vel[:,:,2]<=ranges['v_ang'][1])
     valid[:,:,5] = np.all(valid[:,:,:5],axis=2)
-    n_total = valid.shape[0]*valid.shape[1]
-    n_valid = np.count_nonzero(valid,axis=(0,1))
+#    n_total = valid.shape[0]*valid.shape[1]
+    n_total = np.count_nonzero(valid_time)*valid.shape[1]
+    n_valid = np.count_nonzero(valid&valid_time[:,None,None],axis=(0,1))
     valid_fraction = { 'nan_pos' : n_valid[0]/n_total, 
                        'nan_vel' : n_valid[1]/n_total, 
                        'nan_acc' : n_valid[2]/n_total, 
                        'v'       : n_valid[3]/n_valid[1], 
                        'v_ang'   : n_valid[4]/n_valid[1], 
                        'final'   : n_valid[5]/n_total     }
-    trial.update(valid=valid, valid_fraction=valid_fraction)
+    trial.update(valid_time=valid_time, valid=valid, valid_fraction=valid_fraction)
     return trial
 
 def apply_cuts(trial):
-    for k in 'data','vel','acc','v':
+    for k in ['frame_list','time']:
+        trial[k] = trial[k][trial['valid_time']]
+    for k in 'data','pos','vel','acc','v','d_wall':
         trial[k][~trial['valid'][:,:,5]] = np.nan
+        trial[k] = trial[k][trial['valid_time']]
     return trial
 
 default_cut_ranges = dict( v=[0,np.inf], v_ang=[-np.inf,np.inf] )
 
-def preprocess_trial(trial, cut_ranges=None, load_timestamps=True, etho=False):
+def preprocess_trial(trial, cut_ranges=None, load_timestamps=True, 
+                     rescale_cut_ranges=False, etho=False):
     if etho:
         raise Exception('Not implemented yet: preprocess_trial for ethovision files.')
     trial.update(utils.load_trial(trial['trial_file'], load_timestamps=load_timestamps))
@@ -86,8 +92,9 @@ def preprocess_trial(trial, cut_ranges=None, load_timestamps=True, etho=False):
     if not cut_ranges is None:
         ranges = deepcopy(default_cut_ranges)
         ranges.update(cut_ranges)
-        for k in {'v'} & ranges.keys():
-            ranges[k] = [x*trial['R_cm'] for x in ranges[k]]
+        if rescale_cut_ranges:
+            for k in {'v'} & ranges.keys():
+                ranges[k] = [x*trial['R_cm'] for x in ranges[k]]
         trial = compute_cuts(trial, ranges)
         trial = apply_cuts(trial)
     return trial

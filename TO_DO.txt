@@ -1,7 +1,7 @@
 
 - [?] Tracker: Change handling of extra objects. First choose the contours most likely to be fish. Only then, connect them to objects in the previous frame.
 
-- Viewer: Put colored rectangles in the frame slider's background to indicate tracking issues. 
+- Viewer: When there's a tracking issue, color the relevant fish's buttons as well as the frame slider.
 
 - Viewer: Add option to export a video based on current view/settings. Make it possible to pick a frame range.
 
