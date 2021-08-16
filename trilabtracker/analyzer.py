@@ -4,6 +4,7 @@ from scipy.signal import savgol_filter
 from copy import deepcopy
 from . import utils
 
+
 # # Distance between a point and an ellipse (origin=ellipse center).
 # def dist2ellipse(semi_major, semi_minor, xy):
 #     px,py = np.absolute(xy)
@@ -27,6 +28,7 @@ from . import utils
 #         tx /= t 
 #         ty /= t 
 #     return (np.copysign(a * tx, xy[0]), np.copysign(b * ty, xy[1]))    
+
 
 def compute_kinematics(trial, orientation='body', wall_distance=False):
     tank,R_cm,n_ind,data,time = map(trial.get,['tank','R_cm','n_ind','data','time'])
@@ -58,31 +60,52 @@ def compute_kinematics(trial, orientation='body', wall_distance=False):
         trial['d_wall'] = d_wall
     return trial
 
+
 default_cut_ranges = dict( v=[0,np.inf], v_ang=[-np.inf,np.inf] )
-def compute_cuts(trial, ranges, buffer_frames=0):
+def compute_cuts(trial, ranges, buffer_frames=0, 
+                 remove_occlusions=False, occlusion_buffer=1):
     # valid array: axis 0 = time, axis 1 = [nan_xy,nan_any,d_wall,v,v_ang,final]
     time,pos,vel,acc,v = map(trial.get,['time','pos','vel','acc','v'])
     valid_time   = np.logical_and(time>=ranges['t'][0],time<ranges['t'][1])
-    valid        = np.full(pos.shape[:2]+(6,),np.True_,dtype=np.bool_)
-    valid[:,:,0] = np.any(np.isfinite(pos),axis=2)
-    valid[:,:,1] = np.any(np.isfinite(vel),axis=2)
-    valid[:,:,2] = np.any(np.isfinite(acc),axis=2)
+    valid        = np.full(pos.shape[:2]+(7,),np.True_,dtype=np.bool_)
+    valid[:,:,0] = np.all(np.isfinite(pos),axis=2)
+    valid[:,:,1] = np.all(np.isfinite(vel),axis=2)
+    valid[:,:,2] = np.all(np.isfinite(acc),axis=2)
     valid[:,:,3] = np.logical_and(v>=ranges['v'][0],v<ranges['v'][1])
     valid[:,:,4] = np.logical_and(vel[:,:,2]>=ranges['v_ang'][0],vel[:,:,2]<ranges['v_ang'][1])
-    valid[:,:,5] = np.all(valid[:,:,:5],axis=2)
-    for i in range(buffer_frames):
-        valid[1:-1] = valid[:-2] & valid[1:-1] & valid[2:]
-#    n_total = valid.shape[0]*valid.shape[1]
+    if remove_occlusions:
+        n_ind = trial['n_ind']
+        J1,J2 = np.triu_indices(n_ind,1)
+        d     = np.hypot(pos[:,J1,0]-pos[:,J2,0],pos[:,J1,1]-pos[:,J2,1])
+        # Remove entire frame if there is an occlusion or nan position.
+        valid[:,:,5] = np.all(d>1e-6, axis=1)[:,None]
+    else:
+        valid[:,:,5] = True
+    # Apply buffer_frames. Can be a list of integer (number of buffer frames
+    # for each type of cut) or a single integer (same number for every cut).
+    try:
+        for i in range(valid.shape[2]-1):
+            for j in range(buffer_frames[i]):
+                valid[1:-1,:,i] = valid[:-2,:,i] & valid[1:-1,:,i] & valid[2:,:,i]
+    except:
+        for j in range(buffer_frames):
+            valid[1:-1] = valid[:-2] & valid[1:-1] & valid[2:]
+    # Combine cuts to get final cut.
+    valid[:,:,6] = np.all(valid[:,:,:6],axis=2)
+    # Compute the fraction of values that were dropped by each cut.
+    # I tried to limit double counting, but there is still some.
     n_total = np.count_nonzero(valid_time)*valid.shape[1]
-    n_valid = np.count_nonzero(valid&valid_time[:,None,None],axis=(0,1))
-    valid_fraction = { 'nan_pos' : n_valid[0]/n_total, 
-                       'nan_vel' : n_valid[1]/n_total, 
-                       'nan_acc' : n_valid[2]/n_total, 
-                       'v'       : n_valid[3]/n_valid[1], 
-                       'v_ang'   : n_valid[4]/n_valid[1], 
-                       'final'   : n_valid[5]/n_total     }
-    trial.update(valid_time=valid_time, valid=valid, valid_fraction=valid_fraction)
+    n_cut   = np.count_nonzero((~valid)&valid_time[:,None,None],axis=(0,1))
+    cut_fraction = { 'nan_pos' : n_cut[0]/n_total, 
+                     'nan_vel' : (n_cut[1]-n_cut[0])/n_total, 
+                     'nan_acc' : (n_cut[2]-n_cut[1])/n_total, 
+                     'v'       : (n_cut[3]-n_cut[1])/n_total, 
+                     'v_ang'   : (n_cut[4]-n_cut[1])/n_total, 
+                     'occl'    : (n_cut[5]-n_cut[0])/n_total, 
+                     'final'   : n_cut[6]/n_total     }
+    trial.update(valid_time=valid_time, valid=valid, cut_fraction=cut_fraction)
     return trial
+
 
 def apply_cuts(trial):
     for k in ['valid','frame_list','time']:
@@ -90,8 +113,9 @@ def apply_cuts(trial):
     for k in ['data','pos','vel','acc','v','d_wall']:
         if k in trial.keys():
             trial[k] = trial[k][trial['valid_time']]
-            trial[k][~trial['valid'][:,:,5]] = np.nan
+            trial[k][~trial['valid'][:,:,-1]] = np.nan
     return trial
+
 
 def apply_smoothing(trial, n, method='savgol'):
     for k in ['data','pos','vel','acc','v','d_wall']:
@@ -105,9 +129,11 @@ def apply_smoothing(trial, n, method='savgol'):
                 logging.warning('Unknown smoothing method:', method)
     return trial
 
-def preprocess_trial(trial, load_timestamps=True, orientation='body', 
-                     wall_distance=False, cut_ranges=None, rescale_cut_ranges=False, 
-                     n_smooth=0, buffer_frames=0, etho=False):
+
+def preprocess_trial(trial, load_timestamps=True, wall_distance=False, 
+                     orientation='body', cut_ranges=None, rescale_cut_ranges=False, 
+                     n_smooth=0, buffer_frames=0, remove_occlusions=False, 
+                     etho=False):
     if etho:
         raise Exception('Not implemented yet: preprocess_trial for ethovision files.')
     trial.update(utils.load_trial(trial['trial_file'], load_timestamps=load_timestamps))
@@ -120,7 +146,8 @@ def preprocess_trial(trial, load_timestamps=True, orientation='body',
         if rescale_cut_ranges:
             for k in {'v'} & ranges.keys():
                 ranges[k] = [x*trial['R_cm'] for x in ranges[k]]
-        trial = compute_cuts(trial, ranges, buffer_frames)
+        trial = compute_cuts(trial, ranges, buffer_frames=buffer_frames, 
+                             remove_occlusions=remove_occlusions)
         trial = apply_cuts(trial)
     return trial
 
