@@ -114,7 +114,8 @@ class Track:
         input_video = self.join('raw.txt')
         with open(input_video) as fh:
             input_video = fh.readline().strip()
-        input_video    = self.join(input_video)
+        input_video = self.join(input_video)
+        
         self.cap       = cv2.VideoCapture(input_video)
         self.n_frames  = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.width     = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -249,6 +250,7 @@ class Track:
             return None
         j  = np.nanargmin(d)
         return j if d[j]<self.select_radius else None
+
 
     def fix(self, *fix, history=None, recompute_bad_frames=True):
         i = self.current_frame()-1 if fix[1] is None else fix[1]

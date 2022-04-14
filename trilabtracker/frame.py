@@ -64,6 +64,11 @@ class Frame:
         # Restricting to outermost contours discards spots inside a fish, however
         # sometimes the edge of the image is detected as a contour and fish contours
         # get pushed to the second level in the hierarchy.
+        
+        # Note: findContours used to return a list of contours. The rest of the code
+        # expects a list. In more recent versions of opencv, findContours return a 
+        # tuple instead. The line below makes sure it's always a list.
+        self.contours = list(self.contours)
 
     def analyze_contours(self, n_track, min_area, max_area, max_aspect, guess_front=False):
         self.coord = []

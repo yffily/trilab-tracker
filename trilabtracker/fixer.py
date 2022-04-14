@@ -31,19 +31,35 @@ def interpolate(X, i1, i2, angle=False):
 
 # Interpolate position of fish j from last known position to current frame (i).
 def fix_interpolate_position(tracks, i, j):
-    I = np.nonzero(~np.any(np.isnan(tracks[:i,j,:2]), axis=1))[0]
-    if len(I)==0 or I[-1]==i-1:
-        return False
-    interpolate(tracks[:,j,:2], I[-1], i)
-    return True
+    B = np.any(np.isnan(tracks[:i,j,:2]), axis=1)
+    if np.any(np.isnan(tracks[i,j,:2])):
+        I = np.nonzero(B)[0]
+        if len(I)==0 or I[-1]==i-1:
+            return False
+        interpolate(tracks[:,j,:2], I[-1], i)
+        return True
+    else:
+        I = np.nonzero(~B)[0]
+        if len(I)==0 or I[-1]==i-1:
+            return False
+        interpolate(tracks[:,j,:2], I[-1], i)
+        return True
 
 # Interpolate orientation of fish j from last known orientation to current frame (i).
 def fix_interpolate_orientation(tracks, i, j):
-    I = np.nonzero(~np.isnan(tracks[:i,j,2]))[0]
-    if len(I)==0 or I[-1]==i-1:
-        return False
-    interpolate(tracks[:,j,2], I[-1], i, angle=True)
-    return True
+    B = np.isnan(tracks[:i,j,2])
+    if np.isnan(tracks[i,j,2]):
+        I = np.nonzero(B)[0]
+        if len(I)==0 or I[-1]==i-1:
+            return False
+        interpolate(tracks[:,j,2], I[-1], i, angle=True)
+        return True
+    else:
+        I = np.nonzero(~B)[0]
+        if len(I)==0 or I[-1]==i-1:
+            return False
+        interpolate(tracks[:,j,2], I[-1], i, angle=True)
+        return True
 
 # Delete position of fish j in frame i.
 def fix_delete_position(tracks, i, j):

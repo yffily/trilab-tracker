@@ -1,6 +1,10 @@
 import sys
 import os
 from PyQt5 import QtCore, QtGui, QtWidgets
+try:
+    from PyQt5.QtGui import QFileDialog
+except:
+    from PyQt5.QtWidgets import QFileDialog
 from PyQt5.QtCore import Qt
 from .gui_classes import *
 
@@ -218,8 +222,8 @@ class MainWindow(QtWidgets.QMainWindow):
     
     
     def choose_input_dir(self):
-        input_dir = QtGui.QFileDialog.getExistingDirectory(None, 'Select a folder:', 
-                                  '.', QtGui.QFileDialog.ShowDirsOnly)
+        input_dir = QFileDialog.getExistingDirectory(None, 'Select a folder:', 
+                                  '.', QFileDialog.ShowDirsOnly)
         if input_dir:
             self.input_dir = input_dir
 
