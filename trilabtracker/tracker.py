@@ -359,8 +359,7 @@ class Tracker:
         except:
             self.release()
             logging.info('Failed')
-            for info in sys.exc_info():
-                logging.warning(info)
+            logging.exception('')
             return 1
     
 

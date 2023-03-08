@@ -8,6 +8,10 @@ from .frame import Frame
 from .tank import Tank
 from . import fixer
 from PyQt5 import QtCore, QtGui, QtWidgets
+try:
+    from PyQt5.QtGui import QDialog
+except:
+    from PyQt5.QtWidgets import QDialog
 import pyqtgraph
 from pyqtgraph.widgets.RawImageWidget import RawImageWidget
 from pyqtgraph.GraphicsScene.mouseEvents import MouseClickEvent, MouseDragEvent
@@ -38,7 +42,7 @@ class Config():
         return { k:v for k,v in self.__dict__.items() if k in self.keys }
 
     def dialog(self):
-        dialog  = QtGui.QDialog()
+        dialog  = QDialog()
         layout  = QtWidgets.QGridLayout()
         widgets = dict( marker_size   = QtWidgets.QSpinBox(), 
                         marker_lw     = QtWidgets.QSpinBox(), 
@@ -64,7 +68,7 @@ class Config():
                     w.setValue(self.__dict__[k])
         button.clicked.connect(reset)
         layout.addWidget(button)
-#        button_box = QtGui.QDialogButtonBox(QtGui.QDialogButtonBox.Ok|QtGui.QDialogButtonBox.Cancel)
+#        button_box = QDialogButtonBox(QtGui.QDialogButtonBox.Ok|QtGui.QDialogButtonBox.Cancel)
 #        button_box.accepted.connect(dialog.accept)
 #        button_box.rejected.connect(dialog.reject)
 #        layout.addWidget(button_box)
